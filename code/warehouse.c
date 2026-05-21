@@ -17,10 +17,14 @@
 #define PID_FILE      "/tmp/pids.txt"
 #define STATUS_FILE   "/tmp/wh_status.tmp"
 
-/*NOTA DELL AUTORE: I path delle FIFO sono definiti qui in common.h invece di usare getenv()
+/*NOTA DELL AUTORE: I path delle FIFO sono definiti in common.h invece di usare getenv()
  * perché sono fissi e condivisi da tutti i processi (warehouse, supplier).
  * getenv() aggiungerebbe complessità senza benefici: richiederebbe export
  * nel bootstrap e causerebbe crash non ovvi se la variabile fosse assente. */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Data structures
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
 typedef struct {
     char client_id[MAX_CLIENT_ID];
@@ -31,15 +35,46 @@ typedef struct {
     char response_fifo[MAX_RESP_FIFO];
 } Order;
 
+typedef struct {
+    Item            *items;
+    int             count;
+    pthread_mutex_t mutex;          /* protects stock of every item */
+} Inventory;
+
+
+/* --- Bounded queue (circular buffer, mutex + 2 condvars) ----------------- */
+typedef struct {
+    Order          *buf;
+    int             in, out, size, capacity;
+    pthread_mutex_t mutex;
+    pthread_cond_t  not_full;
+    pthread_cond_t  not_empty;
+    int             shutdown;   /* set to 1 to wake all blocked threads */
+} BoundedQueue;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Variabili globali
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
 static int num_receivers;
 static int num_pickers;
 static int num_packers;
 static int queues_capacity;
+static const char* inventory_path;
+
+static Inventory inv;
+
+static BoundedQueue g_pending;      /* Order Receivers  → Picker Robots  */
+static BoundedQueue g_packaging;
 
 static pthread_t *receiver_threads = NULL;
 static pthread_t *picker_threads   = NULL;
 static pthread_t *packer_threads   = NULL;
 static pthread_t  restock_thread;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Prototipi di funzione
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
 static void* receiver_thread_func(void *arg);
 static void* picker_thread_func(void *arg);
@@ -59,8 +94,8 @@ int main(int argc, char *argv[])
     num_pickers    = atoi(argv[2]);
     num_packers    = atoi(argv[3]);
     queues_capacity = atoi(argv[4]);
-    if (g_num_receivers <= 0 || g_num_pickers <= 0 ||
-        g_num_packers   <= 0 || g_queue_capacity <= 0) {
+    if (num_receivers <= 0 || num_pickers <= 0 ||
+        num_packers   <= 0 || queue_capacity <= 0) {
         fprintf(stderr,
                 "[warehouse] Invalid arguments: all counters must be greather than 0\n");
         return EXIT_FAILURE;
@@ -69,6 +104,7 @@ int main(int argc, char *argv[])
 
 }
 
+static void* init_inventory(const char *inventory_path, Inventory *inv)
 /*
 ////////////////////////////////////////CLAUDATE////////////////////////////////////////////////////////////////////////
  */
@@ -89,44 +125,13 @@ int main(int argc, char *argv[])
  *   SIGUSR1           → dump status to /tmp/wh_status.tmp (for manage.sh)
  */
 
+// TODO: DA CAPIRE
 #define _POSIX_C_SOURCE 200809L
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <pthread.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <signal.h>
-#include <errno.h>
-#include <time.h>
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * Error codes  (shared with Bash as numeric values) da mettere in common.h
- * ═══════════════════════════════════════════════════════════════════════════ */
-#define ERR_OK              0
-#define ERR_ITEM_NOT_FOUND  1
-#define ERR_OUT_OF_STOCK    2
-#define ERR_INVALID_QTY     3
-#define ERR_QUEUE_FULL      4
-#define ERR_IO              5
-#define ERR_PARTIAL         6   /* partial fill: some units shipped, some rejected */
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * FIFO / file paths
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-#define ORDERS_FIFO   "orders.fifo"
-#define RESTOCK_FIFO  "restock.fifo"
-#define LOG_FILE      "orders.log"
-#define PID_FILE      "/tmp/wh_pid.txt"
-#define STATUS_FILE   "/tmp/wh_status.tmp"
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Sizing limits
  * ═══════════════════════════════════════════════════════════════════════════ */
+// TODO: DA CONFRONTARE CON QUELLI IN COMMON.h
 #define MAX_ITEMS      256
 #define MAX_CLIENT_ID  64
 #define MAX_DESC       128
@@ -136,14 +141,6 @@ int main(int argc, char *argv[])
 /* ═══════════════════════════════════════════════════════════════════════════
  * Data structures
  * ═══════════════════════════════════════════════════════════════════════════ */
-
-/* --- Item ----------------------------------------------------------------- */
-typedef struct {
-    int  item_id;
-    char description[MAX_DESC];
-    char category[MAX_CATEGORY];
-    int  stock;
-} Item;
 
 /* --- Inventory ------------------------------------------------------------ */
 typedef struct {
@@ -207,9 +204,8 @@ typedef struct {
 /* ═══════════════════════════════════════════════════════════════════════════
  * Global state
  * ═══════════════════════════════════════════════════════════════════════════ */
-static Inventory    g_inv;
-static BoundedQueue g_pending;      /* Order Receivers  → Picker Robots  */
-static BoundedQueue g_packaging;    /* Picker Robots    → Packers        */
+
+ /* Picker Robots    → Packers        */
 
 static volatile sig_atomic_t g_shutdown = 0;
 
