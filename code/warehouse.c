@@ -13,13 +13,17 @@
 
 #include "common.h"
 
-#define ORDERS_FIFO   "/tmp/orders_queue"
-#define RESTOCK_FIFO  "/tmp/supplier_queue"
 #define LOG_FILE      "orders.log"
 #define PID_FILE      "/tmp/pids.txt"
 #define STATUS_FILE   "/tmp/wh_status.tmp"
 
-
+/* I path delle FIFO sono definiti qui in common.h invece di usare getenv()
+ * perché sono fissi e condivisi da tutti i processi (warehouse, supplier).
+ * getenv() aggiungerebbe complessità senza benefici: richiederebbe export
+ * nel bootstrap e causerebbe crash non ovvi se la variabile fosse assente. */
+// TODO: mettere i path delle fifo in common.h
+static const char *orders_fifo = getenv("ORDERS_FIFO");
+static const char *restock_fifo = getenv("RESTOCK_FIFO");
 
 static int num_receivers;
 static int num_pickers;
@@ -31,10 +35,10 @@ static pthread_t *picker_threads   = NULL;
 static pthread_t *packer_threads   = NULL;
 static pthread_t  restock_thread;
 
-static *void receiver_thread_func(void *);
-static *void picker_thread_func(void *);
-static *void packer_thread_func(void *);
-static *void restock_thread_func(void *);
+static void* receiver_thread_func(void *arg);
+static void* picker_thread_func(void *arg);
+static void* packer_thread_func(void *arg);
+static void* restock_thread_func(void *arg);
 
 int main(int argc, char *argv[])
 {
@@ -60,7 +64,7 @@ int main(int argc, char *argv[])
 }
 
 /*
-////////////////////////////////////////CLAUDATE/////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////CLAUDATE////////////////////////////////////////////////////////////////////////
  */
  /* warehouse.c — Fulfillment Center Warehouse Process
  *
@@ -107,6 +111,7 @@ int main(int argc, char *argv[])
 /* ═══════════════════════════════════════════════════════════════════════════
  * FIFO / file paths
  * ═══════════════════════════════════════════════════════════════════════════ */
+
 #define ORDERS_FIFO   "orders.fifo"
 #define RESTOCK_FIFO  "restock.fifo"
 #define LOG_FILE      "orders.log"
