@@ -1,4 +1,9 @@
 #!/bin/bash
+
+# ---------------------------------------------------------------------------
+# CONTRLLO ARGOMENTI DI INGRESSO
+# ---------------------------------------------------------------------------
+
 if [ $# -ne 6 ]; then
   echo "Usage $0 <num_receivers> <num_pickers> <num_packers> <queue_capacity> <num_suppliers> <inventory.csv>"
   exit 1
@@ -11,11 +16,13 @@ QUEUE_CAP=$4
 NUM_SUPPLIERS=$5
 CSV_FILE=$6
 
+# Verifica che tutti i parametri numerici siano strettamente positivi
 if (( NUM_RECEIVERS < 1 || NUM_PICKERS < 1 || NUM_PACKERS < 1 || QUEUE_CAP < 1 || NUM_SUPPLIERS < 1 )); then
     echo "Parameters 1 to 5 need to be greater than 0"
     exit 1
 fi
 
+# Verifica la presenza e l'eseguibilità dei binari locali fondamentali
 if [ ! -f "./warehouse" ] || [ ! -x "./warehouse" ]; then
     echo "Error: ./warehouse file was not found or is not executable"
     exit 1
@@ -25,70 +32,126 @@ if [ ! -f "./supplier" ] || [ ! -x "./supplier" ]; then
     echo "Error: ./supplier file was not found or is not executable."
     exit 1
 fi
-#NOTA:
-#Controlla solo warehouse e supplier perché il tuo script avvia direttamente quelli.
-#Gli altri (order.sh, ecc.) vengono lanciati a mano dall'utente: se mancano, sarà un problema dell'utente in quel momento, non di bootstrap.sh
+
+# TODO: NOTA DIDATTICA: Controlliamo solo warehouse e supplier perché sono gli unici
+# avviati direttamente dal bootstrap. Altri script (es. order.sh) verranno gestiti
+# manualmente dall'utente durante la simulazione.
 
 
-#VALIDAZIONE DEL FILE CSV
-if [ ! -f "$CSV_FILE" ] || [ ! -r "$CSV_FILE" ]; then
-    echo "Error: CSV file '$CSV_FILE' not found or not readable."
-    exit 1
-fi
+# ===========================================================================
+# CONFIGURAZIONE IPC (Named Pipe / FIFO)
+# ===========================================================================
 
-if [ ! -s "$CSV_FILE" ]; then
-    echo "Error: CSV file '$CSV_FILE' is empty."
-    exit 1
-fi
+# Usiamo il percorso assoluto in /tmp perché è una directory globale di sistema.
+# Questo garantisce un punto di incontro comune per la comunicazione tra processi,
+# anche se warehouse, supplier o order.sh venissero lanciati da cartelle diverse.
 
-NUM_LINES=$(wc -l < "$CSV_FILE")
-if [ "$NUM_LINES" -lt 2 ]; then
-    echo "Error: CSV file must contain at least one data row below the header."
-    exit 1
-fi
-
-
-#FIFO
 ORDERS_FIFO="/tmp/orders_queue"
 SUPPLIER_FIFO="/tmp/supplier_queue"
 
+# NOTA SULL'EXPORT: Se i binari C leggono i path delle FIFO da variabili d'ambiente,
+# ricordati di scommentare le righe qui sotto per renderle visibili ai processi figli:
+export ORDERS_FIFO
+export SUPPLIER_FIFO
+
+
+# Pulizia di canali residui da esecuzioni precedenti
 rm -f "$ORDERS_FIFO" "$SUPPLIER_FIFO"
 
 mkfifo "$ORDERS_FIFO"   || { echo "Error: failed in creating $ORDERS_FIFO";   exit 1; }
 mkfifo "$SUPPLIER_FIFO" || { echo "Error: failed in creating $SUPPLIER_FIFO"; exit 1; }
 
+# ===========================================================================
+# VALIDAZIONE STRUTTURALE DEL FILE CSV (Inventory)
+# ===========================================================================
+
+# 1. Verifica esistenza e permessi di lettura
+if [ ! -f "$CSV_FILE" ] || [ ! -r "$CSV_FILE" ]; then
+    echo "Errore: '$CSV_FILE' non trovato o non leggibile."
+    exit 1
+fi
+
+# 2. Verifica che ci sia contenuto oltre all'intestazione (almeno 2 righe totali)
+NUM_LINES=$(wc -l < "$CSV_FILE")
+if [ "$NUM_LINES" -lt 2 ]; then
+    echo "Errore: il CSV deve avere l'header e almeno una riga dati."
+    exit 1
+fi
+
+# 3. Analisi riga per riga: controllo di integrità del formato
+LINE_NUM=0
+while read -r line; do
+    LINE_NUM=$(( LINE_NUM + 1 ))
+    # Validazione formale dell'intestazione alla prima riga
+    if [ "$LINE_NUM" -eq 1 ]; then
+      if [ "$line" != "ItemID,Description,Category,Stock" ]; then
+          echo "Errore: header non valido. Atteso: 'ItemID,Description,Category,Stock', trovato: '$line'"
+          exit 1
+      fi
+      continue;
+    fi   # salta header
+
+    # Verifica presenza di righe vuote intermedie o finali
+    if [ -z "$line" ]; then
+        echo "Errore: riga $LINE_NUM è vuota."
+        exit 1
+    fi
+
+    # Verifica che la riga contenga esattamente il numero di campi atteso (4 colonne)
+    NUM_FIELDS=$(echo "$line" | tr ',' '\n' | wc -l)
+    if [ "$NUM_FIELDS" -ne 4 ]; then
+        echo "Errore: riga $LINE_NUM ha $NUM_FIELDS campi (attesi 4)."
+        exit 1
+    fi
+
+    # Verifica analitica che nessun singolo campo sia vuoto (es. campi adiacenti ',,')
+    for col in 1 2 3 4; do
+        FIELD=$(echo "$line" | cut -d',' -f"$col")
+        if [ -z "$FIELD" ]; then
+            echo "Errore: riga $LINE_NUM, colonna $col è vuota."
+            exit 1
+        fi
+    done
+
+done < "$CSV_FILE"
+
+# ===========================================================================
+# GENERAZIONE CONFIGURAZIONE FORNITORI (Supplier Conf)
+# ===========================================================================
+
+# TODO: Implementare qui la logica di ripartizione degli Item del CSV
+# tra gli N Supplier e generare i relativi file "supplier_X.conf"
 # ---------------------------------------------------------------------------
-# validazione csv (l08)
-# ---------------------------------------------------------------------------
+
+# TODO: subdirectory con i file di configurazione
+#DA CHIEDERE?
 
 
+# ===========================================================================
+# AVVIO DEI PROCESSI DI SIMULAZIONE (warehouse e supplier su due file separati)
+# ===========================================================================
+WAREHOUSE_PID_FILE="/tmp/warehouse.pid"
+SUPPLIERS_PID_FILE="/tmp/suppliers.pid"
+export WAREHOUSE_PID_FILE
+export SUPPLIERS_PID_FILE
 
-# ---------------------------------------------------------------------------
-# generazione conf supplier
-# gestire tutti i casi, relazione N supplier, e numero di tipi di Item
-# ---------------------------------------------------------------------------
+# Pulizia file PID residui da esecuzioni precedenti
+rm -f "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE"
 
-
-
-
-
-# ---------------------------------------------------------------------------
-# avvio warehouse e supplier
-# ---------------------------------------------------------------------------
-PID_FILE="/tmp/pids.txt"
-
+# Avvio del magazzino in background e salvataggio del suo PID
 ./warehouse "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAP" "$CSV_FILE" &
 WAREHOUSE_PID=$!
-echo "$WAREHOUSE_PID" > "$PID_FILE"
+echo "$WAREHOUSE_PID" > "$WAREHOUSE_PID_FILE"
+#echo "[bootstrap] Warehouse avviato (PID: $WAREHOUSE_PID)"
 
+# Attesa di stabilizzazione per permettere al magazzino di aprire le FIFO
 sleep 1
-#NOTA: convenzione sul formato del file contentente PIDs??
-#Opzioni: Convenzione sulla posizione - Due file separati -  File unico con etichette
 
+# Avvio dei supplier in background
 for i in $(seq 1 "$NUM_SUPPLIERS"); do
     ./supplier "$i" "supplier_${i}.conf" &
     SUPPLIER_PID=$!
-    echo "$SUPPLIER_PID" >> "$PID_FILE"
+    echo "$SUPPLIER_PID" >> "$SUPPLIERS_PID_FILE"
     #echo "[bootstrap] Supplier $i avviato (PID: $SUPPLIER_PID)"
 done
 
@@ -103,124 +166,7 @@ done
 
 
 
-
-###CLAUDATE
-
-# -lt = "less than". Tutti i parametri numerici devono essere >= 1.
-# Usiamo if separati per dare un messaggio di errore preciso per ogni parametro.
-if [ "$NUM_RECEIVERS" -lt 1 ]; then
-    echo "Errore: num_receivers deve essere >= 1 (ricevuto: $NUM_RECEIVERS)"
-    exit 1
-fi
-if [ "$NUM_PICKERS" -lt 1 ]; then
-    echo "Errore: num_pickers deve essere >= 1 (ricevuto: $NUM_PICKERS)"
-    exit 1
-fi
-if [ "$NUM_PACKERS" -lt 1 ]; then
-    echo "Errore: num_packers deve essere >= 1 (ricevuto: $NUM_PACKERS)"
-    exit 1
-fi
-if [ "$QUEUE_CAP" -lt 1 ]; then
-    echo "Errore: queue_capacity deve essere >= 1 (ricevuto: $QUEUE_CAP)"
-    exit 1
-fi
-if [ "$NUM_SUPPLIERS" -lt 1 ]; then
-    echo "Errore: num_suppliers deve essere >= 1 (ricevuto: $NUM_SUPPLIERS)"
-    exit 1
-fi
-
-
-
-# ---------------------------------------------------------------------------
-# 3. VALIDAZIONE DEL FILE CSV
-# ---------------------------------------------------------------------------
-# Verifichiamo quattro cose:
-#   a) il file esiste ed è leggibile
-#   b) il file non è vuoto (-s = file esiste e ha dimensione > 0, l07)
-#   c) ha almeno una riga di dati oltre all'intestazione
-#   d) ogni riga ha esattamente 4 campi e i campi numerici sono numeri
-
-# a) esiste e leggibile
-if [ ! -f "$CSV_FILE" ] || [ ! -r "$CSV_FILE" ]; then
-    echo "Errore: file CSV '$CSV_FILE' non trovato o non leggibile."
-    exit 1
-fi
-
-# b) non è vuoto
-if [ ! -s "$CSV_FILE" ]; then
-    echo "Errore: il file CSV '$CSV_FILE' è vuoto."
-    exit 1
-fi
-
-# c) almeno una riga dati (wc -l conta le righe, l05)
-NUM_LINES=$(wc -l < "$CSV_FILE")
-if [ "$NUM_LINES" -lt 2 ]; then
-    echo "Errore: il CSV deve avere almeno una riga di dati oltre all'intestazione."
-    exit 1
-fi
-
-# d) validazione riga per riga
-# Usiamo "while read -r line" per leggere il file riga per riga (l08).
-# Per ogni riga controlliamo:
-#   - che abbia esattamente 4 campi separati da virgola
-#   - che ItemID (campo 1) sia un numero
-#   - che Stock (campo 4) sia un numero
-#
-# Il pattern case "$VAR" in ''|*[!0-9]*) è il modo Bash (senza regex)
-# per verificare che una stringa sia composta solo da cifre (l08, case).
-# ''        = stringa vuota
-# *[!0-9]*  = contiene almeno un carattere che NON è una cifra
-
-LINE_NUM=0
-while read -r line; do
-    LINE_NUM=$(( LINE_NUM + 1 ))
-
-    # Salta la riga di intestazione
-    if [ "$LINE_NUM" -eq 1 ]; then
-        continue
-    fi
-
-    # Conta i campi: sostituisce le virgole con newline e conta le righe
-    NUM_FIELDS=$(echo "$line" | tr ',' '\n' | wc -l)
-    if [ "$NUM_FIELDS" -ne 4 ]; then
-        echo "Errore: riga $LINE_NUM ha $NUM_FIELDS campi (attesi 4): '$line'"
-        exit 1
-    fi
-
-    # Estrai ItemID (campo 1) e Stock (campo 4)
-    ITEM_ID=$(echo "$line" | cut -d',' -f1)
-    STOCK=$(echo "$line"   | cut -d',' -f4)
-
-    # Verifica che ItemID sia numerico
-    case "$ITEM_ID" in
-        ''|*[!0-9]*)
-            echo "Errore: riga $LINE_NUM — ItemID '$ITEM_ID' non è un numero intero."
-            exit 1
-            ;;
-    esac
-
-    # Verifica che Stock sia numerico
-    case "$STOCK" in
-        ''|*[!0-9]*)
-            echo "Errore: riga $LINE_NUM — Stock '$STOCK' non è un numero intero."
-            exit 1
-            ;;
-    esac
-
-done < "$CSV_FILE"
-
-NUM_ITEMS=$(( NUM_LINES - 1 ))
-echo "[bootstrap] CSV validato: $NUM_ITEMS articoli trovati."
-
-# Garanzia di copertura: ogni supplier deve avere almeno un articolo.
-# Se NUM_SUPPLIERS > NUM_ITEMS il RR lascerebbe alcuni supplier senza articoli.
-# In quel caso riduciamo automaticamente NUM_SUPPLIERS a NUM_ITEMS.
-if [ "$NUM_SUPPLIERS" -gt "$NUM_ITEMS" ]; then
-    echo "Attenzione: num_suppliers ($NUM_SUPPLIERS) > articoli nel CSV ($NUM_ITEMS)."
-    echo "Riduco automaticamente a $NUM_ITEMS supplier per garantire copertura completa."
-    NUM_SUPPLIERS=$NUM_ITEMS
-fi
-
+#/////////////////////////////////////////////////CLAUDATE//////////////////////////////////////////////////////////////
 
 # ---------------------------------------------------------------------------
 # 5. GENERAZIONE FILE DI CONFIGURAZIONE SUPPLIER (Round-Robin)
@@ -268,38 +214,6 @@ done < "$CSV_FILE"
 
 echo "[bootstrap] Configurazione generata per $NUM_SUPPLIERS supplier(s) (Round-Robin)."
 
-# ---------------------------------------------------------------------------
-# 6. AVVIO WAREHOUSE
-# ---------------------------------------------------------------------------
-# "&" manda il processo in background (l03).
-# "$!" cattura il PID dell'ultimo processo avviato in background (l03).
-# Salviamo il PID in un file così manage.sh potrà mandare segnali a warehouse.
-
-PID_FILE="/tmp/fc_pids"
-
-./warehouse "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAP" "$CSV_FILE" &
-WAREHOUSE_PID=$!
-echo "$WAREHOUSE_PID" > "$PID_FILE"
-echo "[bootstrap] Warehouse avviato (PID: $WAREHOUSE_PID)"
-
-# Attende 1 secondo per dare a warehouse il tempo di aprire le FIFO.
-# Senza questo sleep, i supplier troverebbero le FIFO chiuse e bloccherebbero
-# nell'open() perché nessuno ha ancora aperto l'altro lato.
-sleep 1
-
-# ---------------------------------------------------------------------------
-# 7. AVVIO SUPPLIER
-# ---------------------------------------------------------------------------
-# Avvia NUM_SUPPLIERS processi supplier in background.
-# Ogni supplier riceve: il proprio ID e il suo file di configurazione.
-# I PID vengono aggiunti al file PID_FILE (append con >>).
-
-for i in $(seq 1 "$NUM_SUPPLIERS"); do
-    ./supplier "$i" "supplier_${i}.conf" &
-    SUPPLIER_PID=$!
-    echo "$SUPPLIER_PID" >> "$PID_FILE"
-    #echo "[bootstrap] Supplier $i avviato (PID: $SUPPLIER_PID)"
-done
 
 # ---------------------------------------------------------------------------
 # 8. RIEPILOGO
@@ -317,53 +231,4 @@ echo ""
 echo "PIDs salvati in: $PID_FILE"
 echo "Comandi: ./manage.sh status | ./manage.sh shutdown"
 
-
-
-
-#VALIDAZIONE CSV
-
-# 1. Il file non è vuoto
-if [ ! -s "$CSV_FILE" ]; then
-    echo "Errore: il file CSV '$CSV_FILE' è vuoto."
-    exit 1
-fi
-
-# 2. Ha almeno una riga di dati oltre all'intestazione
-NUM_LINES=$(wc -l < "$CSV_FILE")
-if [ "$NUM_LINES" -lt 2 ]; then
-    echo "Errore: il CSV deve avere almeno una riga di dati."
-    exit 1
-fi
-
-# 3. Ogni riga ha esattamente 4 campi separati da virgola
-LINE_NUM=0
-while read -r line; do
-    LINE_NUM=$(( LINE_NUM + 1 ))
-    # Salta intestazione
-    if [ $LINE_NUM -eq 1 ]; then
-        continue
-    fi
-    NUM_FIELDS=$(echo "$line" | cut -d',' -f1-10 | tr ',' '\n' | wc -l)
-    if [ "$NUM_FIELDS" -ne 4 ]; then
-        echo "Errore: riga $LINE_NUM malformata ('$line'), attesi 4 campi."
-        exit 1
-    fi
-    # 4. Il primo campo (ItemID) è numerico
-    ITEM_ID=$(echo "$line" | cut -d',' -f1)
-    case "$ITEM_ID" in
-        ''|*[!0-9]*)
-            echo "Errore: riga $LINE_NUM — ItemID '$ITEM_ID' non è un numero."
-            exit 1
-            ;;
-    esac
-    # 5. Il quarto campo (Stock) è numerico
-    STOCK=$(echo "$line" | cut -d',' -f4)
-    case "$STOCK" in
-        ''|*[!0-9]*)
-            echo "Errore: riga $LINE_NUM — Stock '$STOCK' non è un numero."
-            exit 1
-            ;;
-    esac
-done < "$CSV_FILE"
-
-echo "[bootstrap] CSV validato: $((NUM_LINES - 1)) articoli trovati."
+#TODO interfaccia  grafica come piace al fonta
