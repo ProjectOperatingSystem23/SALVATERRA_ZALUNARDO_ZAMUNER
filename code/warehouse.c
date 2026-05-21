@@ -17,13 +17,19 @@
 #define PID_FILE      "/tmp/pids.txt"
 #define STATUS_FILE   "/tmp/wh_status.tmp"
 
-/* I path delle FIFO sono definiti qui in common.h invece di usare getenv()
+/*NOTA DELL AUTORE: I path delle FIFO sono definiti qui in common.h invece di usare getenv()
  * perché sono fissi e condivisi da tutti i processi (warehouse, supplier).
  * getenv() aggiungerebbe complessità senza benefici: richiederebbe export
  * nel bootstrap e causerebbe crash non ovvi se la variabile fosse assente. */
-// TODO: mettere i path delle fifo in common.h
-static const char *orders_fifo = getenv("ORDERS_FIFO");
-static const char *restock_fifo = getenv("RESTOCK_FIFO");
+
+typedef struct {
+    char client_id[MAX_CLIENT_ID];
+    int  item_id;
+    int  quantity;
+    int  shipped_qty;
+    int  status;
+    char response_fifo[MAX_RESP_FIFO];
+} Order;
 
 static int num_receivers;
 static int num_pickers;

@@ -51,8 +51,6 @@ SUPPLIER_FIFO="/tmp/supplier_queue"
 
 # NOTA SULL'EXPORT: Se i binari C leggono i path delle FIFO da variabili d'ambiente,
 # ricordati di scommentare le righe qui sotto per renderle visibili ai processi figli:
-export ORDERS_FIFO
-export SUPPLIER_FIFO
 
 
 # Pulizia di canali residui da esecuzioni precedenti
@@ -132,8 +130,6 @@ done < "$CSV_FILE"
 # ===========================================================================
 WAREHOUSE_PID_FILE="/tmp/warehouse.pid"
 SUPPLIERS_PID_FILE="/tmp/suppliers.pid"
-export WAREHOUSE_PID_FILE
-export SUPPLIERS_PID_FILE
 
 # Pulizia file PID residui da esecuzioni precedenti
 rm -f "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE"
