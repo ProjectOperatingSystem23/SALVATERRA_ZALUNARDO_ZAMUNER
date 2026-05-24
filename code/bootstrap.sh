@@ -31,7 +31,7 @@ for arg in "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAP" "$NUM_SUP
 done
 
 # ===========================================================================
-# VERIFICA BINARI
+# EXECUTABLES VALIDATION
 # ===========================================================================
 
 # NOTA DIDATTICA: Controlliamo solo warehouse e supplier perché sono gli unici
@@ -48,7 +48,7 @@ if [ ! -f "./supplier" ] || [ ! -x "./supplier" ]; then
 fi
 
 # ===========================================================================
-# VALIDAZIONE FILE CSV (Inventory)
+# INVENTORY FORMAT VALIDATION
 # ===========================================================================
 
 # 1. Verifica esistenza e permessi di lettura
@@ -102,7 +102,7 @@ while read -r line; do
 done < "$CSV_FILE"
 
 # ===========================================================================
-# PULIZIA STATO PRECEDENTE (FIFO, PID file, status file)
+# PREVIOUS STATE CLEAN-UP (FIFO, PID file, status file)
 # ===========================================================================
 
 ORDERS_FIFO="/tmp/orders_queue"
@@ -127,7 +127,7 @@ mkfifo "$SUPPLIER_FIFO" || { echo "Error: failed to create $SUPPLIER_FIFO"; exit
 # precedenti.
 
 # ===========================================================================
-# GENERAZIONE CONFIGURAZIONE SUPPLIER (Round-Robin + rinforzo)
+# .CONF FILES GENERATION
 # ===========================================================================
 # TODO: subdirectory con i file di configurazione
 #TODO: vedere come gestire num_supplier>>>(tanto maggiore)num_item
@@ -239,7 +239,7 @@ for i in $(seq 1 "$NUM_SUPPLIERS"); do
 done
 
 # ===========================================================================
-# RIEPILOGO
+# RECAP
 # ===========================================================================
 
 echo ""
