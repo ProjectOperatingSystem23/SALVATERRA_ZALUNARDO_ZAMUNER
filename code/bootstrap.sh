@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# ---------------------------------------------------------------------------
-# CONTRLLO ARGOMENTI DI INGRESSO
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# CONTROLLO ARGOMENTI DI INGRESSO
+# ===========================================================================
 
 if [ $# -ne 6 ]; then
-  echo "Usage $0 <num_receivers> <num_pickers> <num_packers> <queue_capacity> <num_suppliers> <inventory.csv>"
-  exit 1
+    echo "Usage: $0 <num_receivers> <num_pickers> <num_packers> <queue_capacity> <num_suppliers> <inventory.csv>"
+    exit 1
 fi
 
 NUM_RECEIVERS=$1
@@ -16,51 +16,39 @@ QUEUE_CAP=$4
 NUM_SUPPLIERS=$5
 CSV_FILE=$6
 
-# Verifica che tutti i parametri numerici siano strettamente positivi
-if (( NUM_RECEIVERS < 1 || NUM_PICKERS < 1 || NUM_PACKERS < 1 || QUEUE_CAP < 1 || NUM_SUPPLIERS < 1 )); then
-    echo "Parameters 1 to 5 need to be greater than 0"
-    exit 1
-fi
+# Verifica che i parametri numerici siano interi strettamente positivi
+for arg in "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAP" "$NUM_SUPPLIERS"; do
+    case "$arg" in
+        ''|*[!0-9]*)
+            echo "Error: '$arg' is not a positive integer"
+            exit 1
+            ;;
+        0)
+            echo "Error: '$arg' must be >= 1"
+            exit 1
+            ;;
+    esac
+done
 
-# Verifica la presenza e l'eseguibilità dei binari locali fondamentali
+# ===========================================================================
+# VERIFICA BINARI
+# ===========================================================================
+
+# NOTA DIDATTICA: Controlliamo solo warehouse e supplier perché sono gli unici
+# avviati direttamente dal bootstrap. Altri script (es. order.sh) verranno gestiti
+# manualmente dall'utente durante la simulazione.
 if [ ! -f "./warehouse" ] || [ ! -x "./warehouse" ]; then
-    echo "Error: ./warehouse file was not found or is not executable"
+    echo "Error: ./warehouse not found or not executable"
     exit 1
 fi
 
 if [ ! -f "./supplier" ] || [ ! -x "./supplier" ]; then
-    echo "Error: ./supplier file was not found or is not executable."
+    echo "Error: ./supplier not found or not executable"
     exit 1
 fi
 
-# TODO: NOTA DIDATTICA: Controlliamo solo warehouse e supplier perché sono gli unici
-# avviati direttamente dal bootstrap. Altri script (es. order.sh) verranno gestiti
-# manualmente dall'utente durante la simulazione.
-
-
 # ===========================================================================
-# CONFIGURAZIONE IPC (Named Pipe / FIFO)
-# ===========================================================================
-
-# Usiamo il percorso assoluto in /tmp perché è una directory globale di sistema.
-# Questo garantisce un punto di incontro comune per la comunicazione tra processi,
-# anche se warehouse, supplier o order.sh venissero lanciati da cartelle diverse.
-
-ORDERS_FIFO="/tmp/orders_queue"
-SUPPLIER_FIFO="/tmp/supplier_queue"
-
-# NOTA SULL'EXPORT: Se i binari C leggono i path delle FIFO da variabili d'ambiente,
-# ricordati di scommentare le righe qui sotto per renderle visibili ai processi figli:
-
-
-# Pulizia di canali residui da esecuzioni precedenti
-rm -f "$ORDERS_FIFO" "$SUPPLIER_FIFO"
-
-mkfifo "$ORDERS_FIFO"   || { echo "Error: failed in creating $ORDERS_FIFO";   exit 1; }
-mkfifo "$SUPPLIER_FIFO" || { echo "Error: failed in creating $SUPPLIER_FIFO"; exit 1; }
-
-# ===========================================================================
-# VALIDAZIONE STRUTTURALE DEL FILE CSV (Inventory)
+# VALIDAZIONE FILE CSV (Inventory)
 # ===========================================================================
 
 # 1. Verifica esistenza e permessi di lettura
@@ -114,117 +102,153 @@ while read -r line; do
 done < "$CSV_FILE"
 
 # ===========================================================================
-# GENERAZIONE CONFIGURAZIONE FORNITORI (Supplier Conf)
+# PULIZIA STATO PRECEDENTE (FIFO, PID file, status file)
 # ===========================================================================
 
-# TODO: Implementare qui la logica di ripartizione degli Item del CSV
-# tra gli N Supplier e generare i relativi file "supplier_X.conf"
-# ---------------------------------------------------------------------------
-
-# TODO: subdirectory con i file di configurazione
-#DA CHIEDERE?
-
-
-# ===========================================================================
-# AVVIO DEI PROCESSI DI SIMULAZIONE (warehouse e supplier su due file separati)
-# ===========================================================================
+ORDERS_FIFO="/tmp/orders_queue"
+SUPPLIER_FIFO="/tmp/supplier_queue"
+STATUS_FILE="/tmp/wh_status.tmp"              #lo mettiamo per fare pulizia iniziale anche se lo crea warehouse
 WAREHOUSE_PID_FILE="/tmp/warehouse.pid"
 SUPPLIERS_PID_FILE="/tmp/suppliers.pid"
 
-# Pulizia file PID residui da esecuzioni precedenti
-rm -f "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE"
+rm -f "$ORDERS_FIFO" "$SUPPLIER_FIFO" "$STATUS_FILE" "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE"
 
-# Avvio del magazzino in background e salvataggio del suo PID
-./warehouse "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAP" "$CSV_FILE" &
-WAREHOUSE_PID=$!
-echo "$WAREHOUSE_PID" > "$WAREHOUSE_PID_FILE"
-#echo "[bootstrap] Warehouse avviato (PID: $WAREHOUSE_PID)"
+# ===========================================================================
+# CONFIGURAZIONE IPC (Named FIFO)
+# ===========================================================================
 
-# Attesa di stabilizzazione per permettere al magazzino di aprire le FIFO
-sleep 1
+# /tmp è la directory globale di sistema: garantisce un punto di incontro
+# comune anche se i processi vengono lanciati da directory diverse.
+mkfifo "$ORDERS_FIFO"   || { echo "Error: failed to create $ORDERS_FIFO";   exit 1; }
+mkfifo "$SUPPLIER_FIFO" || { echo "Error: failed to create $SUPPLIER_FIFO"; exit 1; }
 
-# Avvio dei supplier in background
+# STATUS_FILE non va creato qui: viene scritto da warehouse al ricevimento
+# di SIGUSR1. Lo abbiamo rimosso sopra solo per eliminare dati di sessioni
+# precedenti.
+
+# ===========================================================================
+# GENERAZIONE CONFIGURAZIONE SUPPLIER (Round-Robin + rinforzo)
+# ===========================================================================
+# TODO: subdirectory con i file di configurazione
+#DA CHIEDERE?
+
+RESTOCK_QTY=5
+INTERVAL_MIN=5
+INTERVAL_MAX=15
+INTERVAL_RANGE=$(( INTERVAL_MAX - INTERVAL_MIN + 1 ))
+
+# NUM_ITEMS = righe totali del CSV meno l'header
+NUM_ITEMS=$(( NUM_LINES - 1 ))
+
+# Passo A: pulizia e creazione dei file con l'header
+# rm -f con glob elimina anche file orfani di run precedenti con più supplier
+rm -f supplier_*.conf
 for i in $(seq 1 "$NUM_SUPPLIERS"); do
-    ./supplier "$i" "supplier_${i}.conf" &
-    SUPPLIER_PID=$!
-    echo "$SUPPLIER_PID" >> "$SUPPLIERS_PID_FILE"
-    #echo "[bootstrap] Supplier $i avviato (PID: $SUPPLIER_PID)"
-done
-
-
-
-
-
-
-
-
-
-
-
-
-#/////////////////////////////////////////////////CLAUDATE//////////////////////////////////////////////////////////////
-
-# ---------------------------------------------------------------------------
-# 5. GENERAZIONE FILE DI CONFIGURAZIONE SUPPLIER (Round-Robin)
-# ---------------------------------------------------------------------------
-RESTOCK_QTY=5             # quantità inviata per ogni ciclo di restock
-INTERVAL_MIN=5            # intervallo minimo in secondi
-INTERVAL_MAX=15           # intervallo massimo in secondi
-INTERVAL_RANGE=$(( INTERVAL_MAX - INTERVAL_MIN + 1 ))   # = 11
-
-# Passo A: inizializza i file con l'intestazione CSV
-for i in $(seq 1 "$NUM_SUPPLIERS"); do
-    rm -f "supplier_${i}.conf"
     echo "item_id,quantity_per_shipment,interval_seconds" > "supplier_${i}.conf"
-    #echo "[bootstrap] Supplier $i: file inizializzato"
 done
 
-# Passo B: distribuisce gli articoli in Round-Robin
+# Passo B: distribuisce gli item del CSV ai supplier in round-robin
+# ogni supplier riceve una fetta degli item a turno: 1→sup1, 2→sup2, ..., N→sup1, ...
 SUPPLIER_IDX=1
 LINE_NUM=0
-
 while read -r line; do
     LINE_NUM=$(( LINE_NUM + 1 ))
 
-    # Salta la riga di intestazione del CSV
-    if [ "$LINE_NUM" -eq 1 ]; then
-        continue
-    fi
+    # salta la prima riga (header del CSV)
+    if [ "$LINE_NUM" -eq 1 ]; then continue; fi
 
-    # Estrai ItemID (primo campo del CSV)
+    # estrae l'ItemID (prima colonna) e genera un intervallo casuale in [5,15]
     ITEM_ID=$(echo "$line" | cut -d',' -f1)
-
-    # Intervallo casuale per ogni articolo
     INTERVAL=$(( (RANDOM % INTERVAL_RANGE) + INTERVAL_MIN ))
 
-    # Aggiungi l'articolo al file del supplier corrente
+    # appende la riga al file del supplier corrente
     echo "$ITEM_ID,$RESTOCK_QTY,$INTERVAL" >> "supplier_${SUPPLIER_IDX}.conf"
 
-    # Avanza al supplier successivo (Round-Robin)
+    # avanza al supplier successivo; se ha superato l'ultimo ricomincia da 1
     SUPPLIER_IDX=$(( SUPPLIER_IDX + 1 ))
     if [ "$SUPPLIER_IDX" -gt "$NUM_SUPPLIERS" ]; then
         SUPPLIER_IDX=1
     fi
-
 done < "$CSV_FILE"
 
-echo "[bootstrap] Configurazione generata per $NUM_SUPPLIERS supplier(s) (Round-Robin)."
+# Passo C: supplier in eccesso (NUM_SUPPLIERS > NUM_ITEMS)
+# dopo il round-robin i supplier da NUM_ITEMS+1 in poi hanno solo l'header:
+# sarebbero processi inerti. Li trasformiamo in fornitori di rinforzo
+# assegnando loro un item casuale con intervallo più lungo [15,30]s
+if [ "$NUM_SUPPLIERS" -gt "$NUM_ITEMS" ]; then
 
+    BACKUP_MIN=$INTERVAL_MAX
+    BACKUP_MAX=$(( INTERVAL_MAX * 2 ))
+    BACKUP_RANGE=$(( BACKUP_MAX - BACKUP_MIN + 1 ))
 
-# ---------------------------------------------------------------------------
-# 8. RIEPILOGO
-# ---------------------------------------------------------------------------
+    # itera solo sui supplier in eccesso
+    for idx in $(seq $(( NUM_ITEMS + 1 )) "$NUM_SUPPLIERS"); do
+
+        # sceglie un numero di riga dati casuale tra 1 e NUM_ITEMS
+        RANDOM_LINE=$(( (RANDOM % NUM_ITEMS) + 1 ))
+
+        # rillegge il CSV finché non trova la riga scelta, poi esce con break
+        LINE_NUM=0
+        RANDOM_ITEM=""
+        while read -r line; do
+            LINE_NUM=$(( LINE_NUM + 1 ))
+
+            # salta l'header
+            if [ "$LINE_NUM" -eq 1 ]; then continue; fi
+
+            # DATA_LINE è il numero di riga dati (senza contare l'header)
+            DATA_LINE=$(( LINE_NUM - 1 ))
+
+            # quando si arriva alla riga voluta, salva l'ItemID ed esci
+            if [ "$DATA_LINE" -eq "$RANDOM_LINE" ]; then
+                RANDOM_ITEM=$(echo "$line" | cut -d',' -f1)
+                break
+            fi
+        done < "$CSV_FILE"
+
+        # intervallo più lungo rispetto ai supplier primari
+        INTERVAL=$(( (RANDOM % BACKUP_RANGE) + BACKUP_MIN ))
+        echo "$RANDOM_ITEM,$RESTOCK_QTY,$INTERVAL" >> "supplier_${idx}.conf"
+
+    done
+fi
+
+# ===========================================================================
+# AVVIO DEI PROCESSI
+# ===========================================================================
+
+# Warehouse per primo: deve aprire le FIFO prima che i supplier scrivano
+./warehouse "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAP" "$CSV_FILE" &
+echo "$!" > "$WAREHOUSE_PID_FILE"
+
+# Attesa di stabilizzazione: warehouse deve aprire le FIFO in lettura
+# prima che i supplier tentino di aprirle in scrittura
+sleep 1
+
+for i in $(seq 1 "$NUM_SUPPLIERS"); do
+    ./supplier "$i" "supplier_${i}.conf" &
+    echo "$!" >> "$SUPPLIERS_PID_FILE"
+done
+
+# ===========================================================================
+# RIEPILOGO
+# ===========================================================================
+
+NUM_ITEMS=$(( NUM_LINES - 1 ))
 
 echo ""
 echo "=== Fulfillment Center avviato ==="
-echo "  Receivers  : $NUM_RECEIVERS"
-echo "  Pickers    : $NUM_PICKERS"
-echo "  Packers    : $NUM_PACKERS"
-echo "  Queue cap  : $QUEUE_CAP"
-echo "  Suppliers  : $NUM_SUPPLIERS"
-echo "  Inventory  : $CSV_FILE ($NUM_ITEMS articoli)"
+echo "  Receivers : $NUM_RECEIVERS"
+echo "  Pickers   : $NUM_PICKERS"
+echo "  Packers   : $NUM_PACKERS"
+echo "  Queue cap : $QUEUE_CAP"
+echo "  Suppliers : $NUM_SUPPLIERS"
+echo "  Inventory : $CSV_FILE ($NUM_ITEMS items)"
 echo ""
-echo "PIDs salvati in: $PID_FILE"
-echo "Comandi: ./manage.sh status | ./manage.sh shutdown"
+echo "  Warehouse PID : $(cat $WAREHOUSE_PID_FILE)"
+echo "  Supplier PIDs : $(cat $SUPPLIERS_PID_FILE | tr '\n' ' ')"
+echo ""
+echo "Commands: ./manage.sh status | ./manage.sh shutdown"
 
-#TODO interfaccia  grafica come piace al fonta
+
+#/////////////////////////////////////////////////CLAUDATE//////////////////////////////////////////////////////////////
