@@ -241,8 +241,6 @@ done
 # RIEPILOGO
 # ===========================================================================
 
-NUM_ITEMS=$(( NUM_LINES - 1 ))
-
 echo ""
 echo "=== Fulfillment Center avviato ==="
 echo "  Receivers : $NUM_RECEIVERS"
