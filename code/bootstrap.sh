@@ -170,44 +170,51 @@ while read -r line; do
         SUPPLIER_IDX=1
     fi
 done < "$CSV_FILE"
-
 # Passo C: supplier in eccesso (NUM_SUPPLIERS > NUM_ITEMS)
-# dopo il round-robin i supplier da NUM_ITEMS+1 in poi hanno solo l'header:
-# sarebbero processi inerti. Li trasformiamo in fornitori di rinforzo
-# assegnando loro un item casuale con intervallo più lungo [15,30]s
+# i supplier da NUM_ITEMS+1 in poi hanno solo l'header dopo il round-robin.
+# Li trasformiamo in fornitori di rinforzo con item casuali e intervalli
+# crescenti per non intasare la FIFO di restock:
+#   fascia rinforzo      (NUM_ITEMS < idx <= 2*NUM_ITEMS): intervallo [15,30]s
+#   fascia molto eccesso (idx > 2*NUM_ITEMS)             : intervallo [30,60]s
 if [ "$NUM_SUPPLIERS" -gt "$NUM_ITEMS" ]; then
 
+    DOUBLE_ITEMS=$(( NUM_ITEMS * 2 ))
+
+    # fascia rinforzo: [INTERVAL_MAX, 2*INTERVAL_MAX] = [15,30]s
     BACKUP_MIN=$INTERVAL_MAX
     BACKUP_MAX=$(( INTERVAL_MAX * 2 ))
     BACKUP_RANGE=$(( BACKUP_MAX - BACKUP_MIN + 1 ))
 
-    # itera solo sui supplier in eccesso
+    # fascia molto in eccesso: [2*INTERVAL_MAX, 4*INTERVAL_MAX] = [30,60]s
+    SLOW_MIN=$(( INTERVAL_MAX * 2 ))
+    SLOW_MAX=$(( INTERVAL_MAX * 4 ))
+    SLOW_RANGE=$(( SLOW_MAX - SLOW_MIN + 1 ))
+
     for idx in $(seq $(( NUM_ITEMS + 1 )) "$NUM_SUPPLIERS"); do
 
-        # sceglie un numero di riga dati casuale tra 1 e NUM_ITEMS
+        # sceglie una riga dati casuale tra 1 e NUM_ITEMS
         RANDOM_LINE=$(( (RANDOM % NUM_ITEMS) + 1 ))
 
-        # rillegge il CSV finché non trova la riga scelta, poi esce con break
+        # rillegge il CSV fino alla riga scelta e ne estrae l'ItemID
         LINE_NUM=0
         RANDOM_ITEM=""
         while read -r line; do
             LINE_NUM=$(( LINE_NUM + 1 ))
-
-            # salta l'header
             if [ "$LINE_NUM" -eq 1 ]; then continue; fi
-
-            # DATA_LINE è il numero di riga dati (senza contare l'header)
             DATA_LINE=$(( LINE_NUM - 1 ))
-
-            # quando si arriva alla riga voluta, salva l'ItemID ed esci
             if [ "$DATA_LINE" -eq "$RANDOM_LINE" ]; then
                 RANDOM_ITEM=$(echo "$line" | cut -d',' -f1)
                 break
             fi
         done < "$CSV_FILE"
 
-        # intervallo più lungo rispetto ai supplier primari
-        INTERVAL=$(( (RANDOM % BACKUP_RANGE) + BACKUP_MIN ))
+        # assegna l'intervallo in base alla fascia di appartenenza
+        if [ "$idx" -gt "$DOUBLE_ITEMS" ]; then
+            INTERVAL=$(( (RANDOM % SLOW_RANGE) + SLOW_MIN ))
+        else
+            INTERVAL=$(( (RANDOM % BACKUP_RANGE) + BACKUP_MIN ))
+        fi
+
         echo "$RANDOM_ITEM,$RESTOCK_QTY,$INTERVAL" >> "supplier_${idx}.conf"
 
     done
