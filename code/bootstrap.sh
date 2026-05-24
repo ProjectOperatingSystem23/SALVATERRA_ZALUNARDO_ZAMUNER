@@ -130,6 +130,7 @@ mkfifo "$SUPPLIER_FIFO" || { echo "Error: failed to create $SUPPLIER_FIFO"; exit
 # GENERAZIONE CONFIGURAZIONE SUPPLIER (Round-Robin + rinforzo)
 # ===========================================================================
 # TODO: subdirectory con i file di configurazione
+#TODO: vedere come gestire num_supplier>>>(tanto maggiore)num_item
 #DA CHIEDERE?
 
 RESTOCK_QTY=5
@@ -253,7 +254,7 @@ echo ""
 echo "  Warehouse PID : $(cat $WAREHOUSE_PID_FILE)"
 echo "  Supplier PIDs : $(cat $SUPPLIERS_PID_FILE | tr '\n' ' ')"
 echo ""
-echo "Commands: ./manage.sh status | ./manage.sh shutdown"
-
-
-#/////////////////////////////////////////////////CLAUDATE//////////////////////////////////////////////////////////////
+echo "Comandi utili:"
+echo "  ./order.sh <client_id> <item_id> <quantity>   # invia un ordine"
+echo "  ./manage.sh status | restock <id> <qty> | report | shutdown"
+echo ""

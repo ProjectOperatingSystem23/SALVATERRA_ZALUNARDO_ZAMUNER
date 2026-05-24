@@ -13,10 +13,6 @@
 
 #include "common.h"
 
-#define LOG_FILE      "orders.log"
-#define PID_FILE      "/tmp/pids.txt"
-#define STATUS_FILE   "/tmp/wh_status.tmp"
-
 /*NOTA DELL AUTORE: I path delle FIFO sono definiti in common.h invece di usare getenv()
  * perché sono fissi e condivisi da tutti i processi (warehouse, supplier).
  * getenv() aggiungerebbe complessità senza benefici: richiederebbe export
@@ -81,6 +77,13 @@ static void* picker_thread_func(void *arg);
 static void* packer_thread_func(void *arg);
 static void* restock_thread_func(void *arg);
 
+
+static void* init_inventory(const char *inventory_path, Inventory *inv);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Main thread
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
 int main(int argc, char *argv[])
 {
     if (argc != 6) {
@@ -100,7 +103,8 @@ int main(int argc, char *argv[])
                 "[warehouse] Invalid arguments: all counters must be greather than 0\n");
         return EXIT_FAILURE;
         }
-    const char *inventory = argv[5];
+    inventory_path = argv[5];
+    init_inventory(inventory_path, &inv);
 
 }
 
@@ -142,12 +146,6 @@ static void* init_inventory(const char *inventory_path, Inventory *inv)
  * Data structures
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* --- Inventory ------------------------------------------------------------ */
-typedef struct {
-    Item            items[MAX_ITEMS];
-    int             count;
-    pthread_mutex_t mutex;          /* protects stock of every item */
-} Inventory;
 
 /* --- Order status --------------------------------------------------------- */
 typedef enum {
@@ -158,48 +156,6 @@ typedef enum {
     ORDER_REJECTED
 } OrderStatus;
 
-/* --- In-process order (passed through bounded queues) --------------------- */
-typedef struct {
-    char        client_id[MAX_CLIENT_ID];
-    char        resp_fifo[MAX_RESP_FIFO];   /* path to client response FIFO */
-    int         item_id;
-    int         quantity;
-    int         qty_shipped;    /* filled by picker */
-    OrderStatus status;
-    int         error_code;
-} Order;
-
-/* --- Wire format: what order.sh writes into orders.fifo ------------------ */
-typedef struct {
-    char client_id[MAX_CLIENT_ID];
-    char resp_fifo[MAX_RESP_FIFO];
-    int  item_id;
-    int  quantity;
-} OrderRequest;
-
-/* --- Wire format: what warehouse writes back to client ------------------- */
-typedef struct {
-    int status;         /* ERR_* code */
-    int qty_shipped;
-    int qty_rejected;
-} OrderResponse;
-
-/* --- Wire format: what supplier writes into restock.fifo ----------------- */
-typedef struct {
-    int supplier_id;
-    int item_id;
-    int quantity;
-} RestockMessage;
-
-/* --- Bounded queue (circular buffer, mutex + 2 condvars) ----------------- */
-typedef struct {
-    Order          *buf;
-    int             head, tail, size, capacity;
-    pthread_mutex_t mutex;
-    pthread_cond_t  not_full;
-    pthread_cond_t  not_empty;
-    int             shutdown;   /* set to 1 to wake all blocked threads */
-} BoundedQueue;
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Global state
@@ -854,11 +810,6 @@ int main(int argc, char *argv[])
     fcntl(g_restock_fd, F_SETFL,
           fcntl(g_restock_fd, F_GETFL, 0) & ~O_NONBLOCK);
 
-    /* ── Save PID ────────────────────────────────────────────────────────── */
-    {
-        FILE *pf = fopen(PID_FILE, "w");
-        if (pf) { fprintf(pf, "%d\n", (int)getpid()); fclose(pf); }
-    }
 
     /* ── Install signal handlers ─────────────────────────────────────────── */
     {
