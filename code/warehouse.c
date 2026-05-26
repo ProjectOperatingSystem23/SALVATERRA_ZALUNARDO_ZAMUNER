@@ -21,7 +21,17 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * Data structures
  * ═══════════════════════════════════════════════════════════════════════════ */
+/* --- Item (usata dalla struct Inventory) ----------------- */
+typedef struct {
+    int  item_id;
+    char description[MAX_DESC];
+    char category[MAX_CATEGORY];
+    int  stock;
+} Item;
 
+/* --- Order (un istanza di ORDER viene creata quando i receiver leggono dalla orders_FIFO
+ * ------------ i receiver la inseriscono nella pending_orders_queue, i pickers consumano etc)----
+ * ) ----------------- */
 typedef struct {
     char client_id[MAX_CLIENT_ID];
     int  item_id;
@@ -39,6 +49,7 @@ typedef struct {
 
 
 /* --- Bounded queue (circular buffer, mutex + 2 condvars) ----------------- */
+/*----una pending_orders_queue l'altra packaging_queue---*/
 typedef struct {
     Order          *buf;
     int             in, out, size, capacity;
@@ -60,14 +71,18 @@ static const char* inventory_path;
 
 static Inventory inv;
 
-static BoundedQueue g_pending;      /* Order Receivers  → Picker Robots  */
-static BoundedQueue g_packaging;
+static BoundedQueue pending_orders_queue;      /* Order Receivers  → Picker Robots  */
+static BoundedQueue packaging_queue;
 
 static pthread_t *receiver_threads = NULL;
 static pthread_t *picker_threads   = NULL;
 static pthread_t *packer_threads   = NULL;
 static pthread_t  restock_thread;
 
+/*TODO: COSE DEI SEGNALI QUA? GUARDA STATO GLOBALE ALIVSESAN OPUS */
+/*TODO:COLAZIONE DOMANI DAL CIPPA PER TUTTO IL CLA (COMPRESI OPERATORI ANTI INCENDIO DEL 1 PIANO)
+ *TODO: denunciare alvise alle SS, good luck*/
+/* alvise traditore della serenissima */
 /* ═══════════════════════════════════════════════════════════════════════════
  * Prototipi di funzione
  * ═══════════════════════════════════════════════════════════════════════════ */

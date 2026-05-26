@@ -1,22 +1,27 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * common.h — Definizioni condivise tra warehouse, supplier, order.sh
+/* ============================================================================
+ * common.h — Definizioni condivise tra warehouse, supplier e gli script Bash.
  *
- * Contiene: path IPC, error codes, limiti di dimensione, struct wire-format.
- * NON contiene: strutture interne al warehouse (Inventory, Order, BoundedQueue)
- *               che non vengono mai scambiate tra processi diversi.
- * ═══════════════════════════════════════════════════════════════════════════ */
+ * Questo file e' l'INTERFACCIA BINARIA del sistema. Tutti i processi che si
+ * scambiano messaggi via FIFO devono includere ESATTAMENTE questa stessa
+ * versione di common.h, altrimenti i sizeof(...) usati da read/write non
+ * combaciano e i messaggi vengono interpretati in modo errato.
+ *
+ * Contiene:
+ *   - path delle FIFO e dei file di sistema
+ *   - error codes condivisi (stessi numeri usati da Bash via $?)
+ *   - limiti di dimensione dei campi string
+ *   - le tre struct wire-format scambiate sulle FIFO
+ *
+ * Non contiene: strutture interne al solo warehouse (Inventory, BoundedQueue,
+ * Order), che vivono in warehouse.c perche' non escono dal processo.
+ *
+ * Riferimenti corso: Lab06 (IPC FIFO), Lab05 (FD e I/O).
+ * ============================================================================ */
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * Path IPC e file di sistema
- *
- * I path delle FIFO sono definiti qui in common.h invece di usare getenv()
- * perché sono fissi e condivisi da tutti i processi (warehouse, supplier,
- * order.sh). getenv() aggiungerebbe complessità senza benefici: richiederebbe
- * export nel bootstrap e causerebbe crash non ovvi se la variabile fosse assente.
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ====== 1. IPC PATHS AND SYSTEM FILES ====================================== */
 #define ORDERS_FIFO          "/tmp/orders_queue"   /* order.sh → warehouse    */
 #define SUPPLIER_FIFO        "/tmp/supplier_queue" /* supplier → warehouse    */
 #define LOG_FILE             "orders.log"          /* scritto dai packer      */
@@ -24,6 +29,7 @@
 #define WAREHOUSE_PID_FILE   "/tmp/warehouse.pid"  /* PID warehouse (bootstrap) */
 #define SUPPLIERS_PID_FILE   "/tmp/suppliers.pid"  /* PID supplier (bootstrap)  */
 
+/* ====== 2. ERROR CODES ===================================================== */
 /* ═══════════════════════════════════════════════════════════════════════════
  * Error codes  (valori numerici condivisi con gli script Bash)
  *
@@ -38,6 +44,7 @@
 #define ERR_IO              5   /* errore di I/O (file, FIFO, ecc.)            */
 #define ERR_PARTIAL         6   /* consegna parziale: shipped < requested      */
 
+/* ====== 3. STRING FIELDS SIZE LIMITS =========================== */
 /* ═══════════════════════════════════════════════════════════════════════════
  * Limiti di dimensione dei campi nelle struct wire-format CIPPA GAY
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -46,6 +53,7 @@
 #define MAX_CATEGORY    64 // ci sta
 #define MAX_RESP_FIFO  256
 
+/* ====== 4. SENTINEL VALUES ================================================= */
 /* -------------------------------------------------------------------------
  * SENTINEL
  * Valori speciali usati durante lo shutdown per sbloccare thread in attesa.
@@ -54,17 +62,14 @@
  * ------------------------------------------------------------------------- */
 #define SENTINEL_ITEM_ID     -1
 #define SENTINEL_SUPPLIER_ID -1
-/* ═══════════════════════════════════════════════════════════════════════════
- * Item — struttura base dell'inventario
- * (usata dal warehouse; definita qui perché leggibile anche da altri moduli)
- * ═══════════════════════════════════════════════════════════════════════════ */
-typedef struct {
-    int  item_id;
-    char description[MAX_DESC];
-    char category[MAX_CATEGORY];
-    int  stock;
-} Item;
 
+/* ====== 5. COMMON STRUCTS ================================================== */
+
+//WIRE FORMAT : MESSAGE PASSING
+/* Queste tre struct attraversano i confini di processo: vengono scritte come
+ * blocchi BINARI (write/read di sizeof(struct)). Su FIFO Linux la write
+ * < PIPE_BUF byte (>= 4096) e' atomica, quindi messaggi di writer
+ * concorrenti non si mischiano (man 7 pipe). */
 /* ═══════════════════════════════════════════════════════════════════════════
  * Struct wire-format: messaggi scambiati tra processi via FIFO
  *
