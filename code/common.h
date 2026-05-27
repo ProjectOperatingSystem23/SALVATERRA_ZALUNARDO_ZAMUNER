@@ -22,8 +22,8 @@
  * ============================================================================ */
 
 /* ====== 1. IPC PATHS AND SYSTEM FILES ====================================== */
-#define ORDERS_FIFO          "/tmp/orders_queue"   /* order.sh → warehouse    */
-#define SUPPLIER_FIFO        "/tmp/supplier_queue" /* supplier → warehouse    */
+#define ORDERS_FIFO          "/tmp/orders_fifo"   /* order.sh → warehouse    */
+#define RESTOCK_FIFO        "/tmp/restock_fifo" /* supplier → warehouse    */
 #define LOG_FILE             "orders.log"          /* scritto dai packer      */
 #define STATUS_FILE          "/tmp/wh_status.tmp"  /* dump SIGUSR1 warehouse  */
 #define WAREHOUSE_PID_FILE   "/tmp/warehouse.pid"  /* PID warehouse (bootstrap) */
@@ -43,7 +43,9 @@
 #define ERR_QUEUE_FULL      4   /* bounded buffer pieno (non usato attivamente) */
 #define ERR_IO              5   /* errore di I/O (file, FIFO, ecc.)            */
 #define ERR_PARTIAL         6   /* consegna parziale: shipped < requested      */
-
+#define ERR_SHUTTING_DOWN    7   /* warehouse non accetta nuovi ordini */
+#define ERR_WAREHOUSE_DOWN   8   /* order.sh/manage.sh non trova warehouse */
+#define ERR_TIMEOUT          9   /* attesa risposta IPC scaduta */
 /* ====== 3. STRING FIELDS SIZE LIMITS =========================== */
 /* ═══════════════════════════════════════════════════════════════════════════
  * Limiti di dimensione dei campi nelle struct wire-format CIPPA GAY

@@ -29,6 +29,13 @@ typedef struct {
     int  stock;
 } Item;
 
+/* --- Inventory (Un'istanza di inventory per tenere traccia dell inventario (accesso sincronizzato) ----------------- */
+typedef struct {
+    Item            *items;
+    int             count; /*forse si può togliere*/
+    pthread_mutex_t mutex;          /* protects stock of every item */
+} Inventory;
+
 /* --- Order (un istanza di ORDER viene creata quando i receiver leggono dalla orders_FIFO
  * ------------ i receiver la inseriscono nella pending_orders_queue, i pickers consumano etc)----
  * ) ----------------- */
@@ -56,7 +63,7 @@ typedef struct {
     pthread_mutex_t mutex;
     pthread_cond_t  not_full;
     pthread_cond_t  not_empty;
-    int             shutdown;   /* set to 1 to wake all blocked threads */
+    int             shutdown; /*TODO: VEDERE SE CI STA  /* set to 1 to wake all blocked threads */
 } BoundedQueue;
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -70,7 +77,7 @@ static int queues_capacity;
 static const char* inventory_path;
 
 static Inventory inv;
-
+/*TODO: RAGIONARE SE LO SCOPE DELLE QUEUE DEBBA ESSERE GLOBALE O DEL MAIN PERCHÉ LE PASSIAMO COME ARGOMENTI*/
 static BoundedQueue pending_orders_queue;      /* Order Receivers  → Picker Robots  */
 static BoundedQueue packaging_queue;
 
@@ -86,20 +93,33 @@ static pthread_t  restock_thread;
  *  write nell'handler non vengano riordinate dal compilatore e che siano
  *  atomiche rispetto alla consegna del segnale. */
 /* TODO: SIGSUSPEND VS PAUSE FATTO A LAB */
+
+/*TODO: SERVE UN MUTEX SULLO SHUTDOWN???? SIG?*/
 static volatile sig_atomic_t shutdown_flag    = 0;
 static volatile sig_atomic_t dump_status_flag = 0;
+
+static int next_order_id_value = 1;
+static pthread_mutex_t order_id_mutex;
+
+static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * Prototipi di funzione
  * ═══════════════════════════════════════════════════════════════════════════ */
+/*TODO: RANDOMIZZARE */
+ /*static void sleep_random_1_to_3(unsigned int *seed); */
 
-static void* receiver_thread_func(void *arg);
-static void* picker_thread_func(void *arg);
-static void* packer_thread_func(void *arg);
-static void* restock_thread_func(void *arg);
+/*THREAD BODIES*/
+static void *receiver_thread_func(void *arg);
+static void *picker_thread_func(void *arg);
+static void *packer_thread_func(void *arg);
+static void *restock_thread_func(void *arg);
 
+/*FUNZIONI RELATIVE ALL INVENTARIO*/
+static void load_inventory(const char *inventory_path);
+/*?static int parse_inventory_line(const char *line, InventoryItem *item);*/
 
-static void *load_inventory(const char *inventory_path, Inventory *inv);
-
+/*FUNZIONI SULLE QUEUE*/
 static int queue_init(BoundedQueue *q, int capacity);
 
 /* Inserisce un Order. Blocca se la coda e' piena.
@@ -135,7 +155,7 @@ int main(int argc, char *argv[])
 
 }
 
-static void* load_inventory(const char *inventory_path, Inventory *inv);
+static void* load_inventory(const char *inventory_path);
 
 static int queue_init(BoundedQueue *q, int capacity) {
     q->buffer = malloc((size_t)capacity * sizeof(Order));
@@ -161,6 +181,27 @@ static int queue_produce(BoundedQueue *q, const Order *order) {
     q->tail = (q->tail + 1) % q->capacity;
     q->count++;
     pthread_cond_signal(&q->not_empty);   /* sveglia un consumer             */
+    pthread_mutex_unlock(&q->mutex);
+    return 0;
+}
+
+/* Estrae un Order. Blocca se la coda e' vuota.
+ * Ritorna 0 in caso normale, -1 se done==1 E coda vuota
+ *   ⇒ il chiamante (picker/packer) sa che puo' uscire dal proprio while.
+ * NB: se done==1 ma ci sono ancora elementi, li DRAINIAMO. Questo realizza
+ *     il "complete in-flight orders before exiting" della spec 2.2.10. */
+static int consume_from_queue(BoundedQueue *q, Order *order) {
+    pthread_mutex_lock(&q->mutex);
+    while (q->count == 0 && !q->done)
+        pthread_cond_wait(&q->not_empty, &q->mutex);
+    if (q->count == 0) {
+        pthread_mutex_unlock(&q->mutex);
+        return -1;
+    }
+    *order = q->buffer[q->head];
+    q->head = (q->head + 1) % q->capacity;
+    q->count--;
+    pthread_cond_signal(&q->not_full);    /* sveglia un producer             */
     pthread_mutex_unlock(&q->mutex);
     return 0;
 }

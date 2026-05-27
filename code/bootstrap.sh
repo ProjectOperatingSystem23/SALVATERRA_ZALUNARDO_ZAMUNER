@@ -57,14 +57,22 @@ if [ ! -f "$CSV_FILE" ] || [ ! -r "$CSV_FILE" ]; then
     exit 1
 fi
 
-# 2. Verifica che ci sia contenuto oltre all'intestazione (almeno 2 righe totali)
+#2 contrllo duplicati
+DUPLICATES=$(tail -n +2 "$CSV_FILE" | cut -d',' -f1 | sort | uniq -d)
+if [ -n "$DUPLICATES" ]; then
+    echo "Errore: ItemID duplicati trovati:"
+    echo "$DUPLICATES"
+    exit 1
+fi
+
+# 3. Verifica che ci sia contenuto oltre all'intestazione (almeno 2 righe totali)
 NUM_LINES=$(wc -l < "$CSV_FILE")
 if [ "$NUM_LINES" -lt 2 ]; then
     echo "Errore: il CSV deve avere l'header e almeno una riga dati."
     exit 1
 fi
 
-# 3. Analisi riga per riga: controllo di integrità del formato
+# 4. Analisi riga per riga: controllo di integrità del formato
 LINE_NUM=0
 while read -r line; do
     LINE_NUM=$(( LINE_NUM + 1 ))
@@ -98,18 +106,71 @@ while read -r line; do
             exit 1
         fi
     done
+  #controllo singoli campi
+    ITEM_ID=$(echo "$line" | cut -d',' -f1)
+    DESCRIPTION=$(echo "$line" | cut -d',' -f2)
+    CATEGORY=$(echo "$line" | cut -d',' -f3)
+    STOCK=$(echo "$line" | cut -d',' -f4)
 
+    case "$ITEM_ID" in
+        ''|*[!0-9]*)
+            echo "Errore: riga $LINE_NUM, ItemID non numerico."
+            exit 1
+            ;;
+    esac
+
+    case "$STOCK" in
+        ''|*[!0-9]*)
+            echo "Errore: riga $LINE_NUM, Stock non numerico."
+            exit 1
+            ;;
+    esac
+
+    if [ "${#DESCRIPTION}" -ge 128 ]; then
+        echo "Errore: riga $LINE_NUM, Description troppo lunga."
+        exit 1
+    fi
+
+    if [ "${#CATEGORY}" -ge 64 ]; then
+        echo "Errore: riga $LINE_NUM, Category troppo lunga."
+        exit 1
+    fi
 done < "$CSV_FILE"
 
 # ===========================================================================
 # PREVIOUS STATE CLEAN-UP (FIFO, PID file, status file)
 # ===========================================================================
 
-ORDERS_FIFO="/tmp/orders_queue"
-SUPPLIER_FIFO="/tmp/supplier_queue"
+ORDERS_FIFO="/tmp/orders_fifo"
+RESTOCK_FIFO="/tmp/restock_fifo"
 STATUS_FILE="/tmp/wh_status.tmp"              #lo mettiamo per fare pulizia iniziale anche se lo crea warehouse
 WAREHOUSE_PID_FILE="/tmp/warehouse.pid"
 SUPPLIERS_PID_FILE="/tmp/suppliers.pid"
+#TODO: CONTROLLARE trap per cleanup se bootstrap viene interrotto, LAB09
+# trap per cleanup se bootstrap viene interrotto
+STARTED_PIDS=""
+
+cleanup_on_error() {
+    echo "Cleaning up after startup failure..."
+    for pid in $STARTED_PIDS; do
+        kill -TERM "$pid" 2>/dev/null
+    done
+    rm -f "$ORDERS_FIFO" "$SUPPLIER_FIFO" "$STATUS_FILE" \
+          "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE"
+    exit 1
+}
+
+trap cleanup_on_error INT TERM
+
+#controlliamo che non ci sia già una warehouse running
+if [ -f "$WAREHOUSE_PID_FILE" ]; then
+    OLD_PID=$(cat "$WAREHOUSE_PID_FILE")
+    if kill -0 "$OLD_PID" 2>/dev/null; then
+        echo "Error: warehouse already running with PID $OLD_PID"
+        echo "Use ./manage.sh shutdown before starting a new instance."
+        exit 1
+    fi
+fi
 
 rm -f "$ORDERS_FIFO" "$SUPPLIER_FIFO" "$STATUS_FILE" "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE"
 
@@ -224,10 +285,13 @@ fi
 # ===========================================================================
 # AVVIO DEI PROCESSI
 # ===========================================================================
+#TODO: CONSIDERARE SE REDIREZIONARE OUTPUT DI WAREHOUSE E SUPPLIER IN FILE DI LOG
 
 # Warehouse per primo: deve aprire le FIFO prima che i supplier scrivano
 ./warehouse "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAP" "$CSV_FILE" &
-echo "$!" > "$WAREHOUSE_PID_FILE"
+WAREHOUSE_PID=$!
+echo "$WAREHOUSE_PID" > "$WAREHOUSE_PID_FILE"
+STARTED_PIDS="$STARTED_PIDS $WAREHOUSE_PID"
 
 # Attesa di stabilizzazione: warehouse deve aprire le FIFO in lettura
 # prima che i supplier tentino di aprirle in scrittura
@@ -235,7 +299,9 @@ sleep 1
 
 for i in $(seq 1 "$NUM_SUPPLIERS"); do
     ./supplier "$i" "supplier_${i}.conf" &
-    echo "$!" >> "$SUPPLIERS_PID_FILE"
+    SUPP_PID=$!
+    STARTED_PIDS="$STARTED_PIDS $SUPP_PID"
+    echo "$SUPP_PID" >> "$SUPPLIERS_PID_FILE"
 done
 
 # ===========================================================================
