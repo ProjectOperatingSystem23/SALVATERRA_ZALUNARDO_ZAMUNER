@@ -51,7 +51,7 @@ typedef struct {
 /* --- Bounded queue (circular buffer, mutex + 2 condvars) ----------------- */
 /*----una pending_orders_queue l'altra packaging_queue---*/
 typedef struct {
-    Order          *buf;
+    Order          *buffer;
     int             in, out, size, capacity;
     pthread_mutex_t mutex;
     pthread_cond_t  not_full;
@@ -80,9 +80,14 @@ static pthread_t *packer_threads   = NULL;
 static pthread_t  restock_thread;
 
 /*TODO: COSE DEI SEGNALI QUA? GUARDA STATO GLOBALE ALIVSESAN OPUS */
-/*TODO:COLAZIONE DOMANI DAL CIPPA PER TUTTO IL CLA (COMPRESI OPERATORI ANTI INCENDIO DEL 1 PIANO)
- *TODO: denunciare alvise alle SS, good luck*/
-/* alvise traditore della serenissima */
+/* TODO:COLAZIONE DOMANI DAL CIPPA PER TUTTO IL CLA (COMPRESI OPERATORI ANTI INCENDIO DEL 1 PIANO)
+
+/*  Il tipo volatile sig_atomic_t, garantisce che la read nel while (del main) e la
+ *  write nell'handler non vengano riordinate dal compilatore e che siano
+ *  atomiche rispetto alla consegna del segnale. */
+/* TODO: SIGSUSPEND VS PAUSE FATTO A LAB */
+static volatile sig_atomic_t shutdown_flag    = 0;
+static volatile sig_atomic_t dump_status_flag = 0;
 /* ═══════════════════════════════════════════════════════════════════════════
  * Prototipi di funzione
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -93,8 +98,15 @@ static void* packer_thread_func(void *arg);
 static void* restock_thread_func(void *arg);
 
 
-static void* init_inventory(const char *inventory_path, Inventory *inv);
+static void *load_inventory(const char *inventory_path, Inventory *inv);
 
+static int queue_init(BoundedQueue *q, int capacity);
+
+/* Inserisce un Order. Blocca se la coda e' piena.
+ * Ritorna 0 in caso normale, -1 se la coda e' stata chiusa (shutdown). */
+static int queue_produce(BoundedQueue *q, const Order *order);
+
+static int queue_consume(BoundedQueue *q, Order *order);
 /* ═══════════════════════════════════════════════════════════════════════════
  * Main thread
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -123,7 +135,35 @@ int main(int argc, char *argv[])
 
 }
 
-static void* init_inventory(const char *inventory_path, Inventory *inv)
+static void* load_inventory(const char *inventory_path, Inventory *inv);
+
+static int queue_init(BoundedQueue *q, int capacity) {
+    q->buffer = malloc((size_t)capacity * sizeof(Order));
+    if (!q->buffer) return -1; /*equivalente a buffer==NULL????*/
+    q->head = q->tail = q->count = 0;
+    q->capacity = capacity;
+    q->done     = 0; /*TODO: CAPIRE COSA FA/SERVE DONE*/
+    if (pthread_mutex_init(&q->mutex,    NULL) != 0) return -1;
+    if (pthread_cond_init (&q->not_full,  NULL) != 0) return -1;
+    if (pthread_cond_init (&q->not_empty, NULL) != 0) return -1;
+    return 0;
+}
+
+static int queue_produce(BoundedQueue *q, const Order *order) {
+    pthread_mutex_lock(&q->mutex);
+    while (q->count == q->capacity && !q->done)
+        pthread_cond_wait(&q->not_full, &q->mutex); /*PERCHÉ PRENDE IN INPUT ANCHE IL MUTEX???*/
+    if (q->done) {
+        pthread_mutex_unlock(&q->mutex);
+        return -1;
+    }
+    q->buffer[q->tail] = *order;
+    q->tail = (q->tail + 1) % q->capacity;
+    q->count++;
+    pthread_cond_signal(&q->not_empty);   /* sveglia un consumer             */
+    pthread_mutex_unlock(&q->mutex);
+    return 0;
+}
 /*
 ////////////////////////////////////////CLAUDATE////////////////////////////////////////////////////////////////////////
  */
