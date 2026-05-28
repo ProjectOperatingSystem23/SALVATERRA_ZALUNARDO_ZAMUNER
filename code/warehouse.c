@@ -1,17 +1,16 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <pthread.h>
-#include <signal.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <sys/types.h>
+#include <stdio.h>      /* Lab02: I/O standard (printf, fopen, sscanf, ecc.) */
+#include <stdlib.h>     /* Lab02: Utility standard (malloc, free, exit, rand) */
+#include <string.h>     /* Lab02: Manipolazione stringhe (strcmp, strcpy) */
+#include <unistd.h>     /* Lab02/05: System call Unix (close, read, write, sleep) */
+#include <fcntl.h>      /* Lab05: Costanti per controllo file (O_RDONLY, O_WRONLY) */
+#include <sys/types.h>  /* Lab05/06: Tipi primitivi di sistema (pid_t, ssize_t) */
+#include <sys/stat.h>   /* Lab06: Creazione/controllo file e FIFO (stat) */
+#include <pthread.h>    /* Lab04: Gestione Thread, Mutex e Condition Variables */
+#include <signal.h>     /* Lab03: Gestione asincrona dei segnali (sigaction, kill) */
+#include <errno.h>      /* Lab05: Gestione e diagnostica degli errori di sistema */
 #include <time.h>
-#include <errno.h>
-#include <stdint.h>
 
-#include "common.h"
+#include "common.h"     /* La nostra interfaccia binaria condivisa */
 
 /*NOTA DELL AUTORE: I path delle FIFO sono definiti in common.h invece di usare getenv()
  * perché sono fissi e condivisi da tutti i processi (warehouse, supplier).
@@ -124,7 +123,7 @@ static void *receiver_thread_func(void *arg);
 static void *picker_thread_func(void *arg);
 static void *packer_thread_func(void *arg);
 static void *restock_thread_func(void *arg);
-
+a
 /*FUNZIONI RELATIVE ALL INVENTARIO*/
 static void load_inventory(Inventory* inv ,const char *inventory_path);
 /*?static int parse_inventory_line(const char *line, InventoryItem *item);*/

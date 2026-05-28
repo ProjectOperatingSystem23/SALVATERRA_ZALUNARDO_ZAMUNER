@@ -37,11 +37,12 @@
  * In Bash usare le stesse costanti numeriche, es:
  *   ERR_OK=0  ERR_ITEM_NOT_FOUND=1  ERR_OUT_OF_STOCK=2 ...
  * ═══════════════════════════════════════════════════════════════════════════ */
-#define ERR_OK              0
+/*TODO: VEDERE QUANDO VENGONO USATI*/
+#define ERR_OK              0   /* Successo */
 #define ERR_ITEM_NOT_FOUND  1   /* item_id non presente in inventario          */
 #define ERR_OUT_OF_STOCK    2   /* item presente ma stock == 0                 */
 #define ERR_INVALID_QTY     3   /* quantità <= 0                               */
-#define ERR_QUEUE_FULL      4   /* bounded buffer pieno (non usato attivamente) */
+#define ERR_QUEUE_FULL      4   /* bounded buffer pieno (nN attivamente) */
 #define ERR_IO              5   /* errore di I/O (file, FIFO, ecc.)            */
 #define ERR_PARTIAL         6   /* consegna parziale: shipped < requested      */
 #define ERR_SHUTTING_DOWN    7   /* warehouse non accetta nuovi ordini */
@@ -49,11 +50,11 @@
 #define ERR_TIMEOUT          9   /* attesa risposta IPC scaduta */
 /* ====== 3. STRING FIELDS SIZE LIMITS =========================== */
 /* ═══════════════════════════════════════════════════════════════════════════
- * Limiti di dimensione dei campi nelle struct wire-format CIPPA GAY
+ * Limiti di dimensione dei campi nelle struct wire-format
  * ═══════════════════════════════════════════════════════════════════════════ */
 #define MAX_CLIENT_ID   64
-#define MAX_DESC       128 // ci sta
-#define MAX_CATEGORY    64 // ci sta
+#define MAX_DESC       128 /* ci sta*/
+#define MAX_CATEGORY    64 /* ci sta */
 #define MAX_RESP_FIFO  256
 
 /* ====== 4. SENTINEL VALUES ================================================= */
@@ -63,8 +64,25 @@
  * Un receiver che legge un OrderMsg con item_id == SENTINEL_ITEM_ID sa
  * che deve uscire. Stesso principio per RestockMsg.
  * ------------------------------------------------------------------------- */
+/*TODO: ATTENZIONE A:*/
+/* ATTENZIONE: il warehouse deve rifiutare (ERR_ITEM_NOT_FOUND) qualsiasi
+* ordine client con item_id <= 0, per evitare che un client malevolo invii
+* il valore sentinel durante il normale funzionamento.*/
+
 #define SENTINEL_ITEM_ID     -1
 #define SENTINEL_SUPPLIER_ID -1
+
+/*
+ * MANUAL_RESTOCK_SUPPLIER_ID
+ * Usato da manage.sh per inviare un restock manuale via RESTOCK_FIFO,
+ * riutilizzando la stessa struct RestockMsg dei supplier reali.
+ * Il warehouse distingue: supplier_id == 0 → restock manuale,
+ *                         supplier_id >= 1 → supplier reale.
+ * sizeof(RestockMsg) = 12 B < PIPE_BUF (>= 4096 B): write atomica garantita
+ * anche con supplier reali che scrivono contemporaneamente (man 7 pipe).
+ */
+/*TODO: VEDERE QUANDO CI ARRIVIAMO SE SERVE QUESTO*/
+#define MANUAL_RESTOCK_SUPPLIER_ID  0
 
 /* ====== 5. COMMON STRUCTS ================================================== */
 
