@@ -21,6 +21,15 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * Data structures
  * ═══════════════════════════════════════════════════════════════════════════ */
+/* Stato interno di un ordine lungo la pipeline */
+typedef enum {
+    ORDER_RECEIVED,
+    ORDER_PICKING,
+    ORDER_PACKING,
+    ORDER_SHIPPED,
+    ORDER_REJECTED
+} OrderStatus;
+
 /* --- Item (usata dalla struct Inventory) ----------------- */
 typedef struct {
     int  item_id;
@@ -63,45 +72,46 @@ typedef struct {
     pthread_mutex_t mutex;
     pthread_cond_t  not_full;
     pthread_cond_t  not_empty;
-    int             shutdown; /*TODO: VEDERE SE CI STA  /* set to 1 to wake all blocked threads */
+    int             shutdown; /*TODO: VEDERE SE CI STA  O FARE CON LE SENTINELLE*/ /* set to 1 to wake all blocked threads */
 } BoundedQueue;
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Variabili globali
  * ═══════════════════════════════════════════════════════════════════════════ */
-
 static int num_receivers;
 static int num_pickers;
 static int num_packers;
 static int queues_capacity;
 static const char* inventory_path;
 
-static Inventory inv;
-/*TODO: RAGIONARE SE LO SCOPE DELLE QUEUE DEBBA ESSERE GLOBALE O DEL MAIN PERCHÉ LE PASSIAMO COME ARGOMENTI*/
+/*TODO:SPOSTARE LE BOUNDED QUEUE IN MAIN*/
 static BoundedQueue pending_orders_queue;      /* Order Receivers  → Picker Robots  */
 static BoundedQueue packaging_queue;
 
+/*TODO: SPOSTARE NEL MAIN PERCHÉ SIA CREATE, JOIN CHE KILL SONO FATTE TUTTE DAL MAIN*/
 static pthread_t *receiver_threads = NULL;
 static pthread_t *picker_threads   = NULL;
 static pthread_t *packer_threads   = NULL;
 static pthread_t  restock_thread;
 
 /*TODO: COSE DEI SEGNALI QUA? GUARDA STATO GLOBALE ALIVSESAN OPUS */
-/* TODO:COLAZIONE DOMANI DAL CIPPA PER TUTTO IL CLA (COMPRESI OPERATORI ANTI INCENDIO DEL 1 PIANO)
+
 
 /*  Il tipo volatile sig_atomic_t, garantisce che la read nel while (del main) e la
  *  write nell'handler non vengano riordinate dal compilatore e che siano
  *  atomiche rispetto alla consegna del segnale. */
 /* TODO: SIGSUSPEND VS PAUSE FATTO A LAB */
 
-/*TODO: SERVE UN MUTEX SULLO SHUTDOWN???? SIG?*/
+/*TODO: SERVE UN MUTEX SULLO SHUTDOWN???? SIG? COMPORTAMENTO SIGSUSPNEND*/
 static volatile sig_atomic_t shutdown_flag    = 0;
 static volatile sig_atomic_t dump_status_flag = 0;
 
 static int next_order_id_value = 1;
 static pthread_mutex_t order_id_mutex;
 
-static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
+/*TODO: QUANDO SCRIVIAMO SU LOG CI SERVIRÀ UN MUTEX??  O NO COME PER LE FIFO VA TUTTO BENE, SE USIAMO UNA STRUCT */
+static pthread_mutex_t log_mutex;
+static pthread_mutex_t orders_read_mutex;
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Prototipi di funzione
@@ -116,8 +126,11 @@ static void *packer_thread_func(void *arg);
 static void *restock_thread_func(void *arg);
 
 /*FUNZIONI RELATIVE ALL INVENTARIO*/
-static void load_inventory(const char *inventory_path);
+static void load_inventory(Inventory* inv ,const char *inventory_path);
 /*?static int parse_inventory_line(const char *line, InventoryItem *item);*/
+/*?static void  parse_csv_field(char **pp, char *dst, int dst_size);*/
+/*?static int   inventory_decrement_locked(Inventory *inv, int item_id,int qty, int *err_out);*/
+/*?static void  inventory_increment_locked(Inventory *inv, int item_id, int qty);*//*TODO: ASSICURARSI CHE L INCREMENTO DEBBA ESSERE MUTEX*/
 
 /*FUNZIONI SULLE QUEUE*/
 static int queue_init(BoundedQueue *q, int capacity);
@@ -134,7 +147,7 @@ static int queue_consume(BoundedQueue *q, Order *order);
 int main(int argc, char *argv[])
 {
     if (argc != 6) {
-        fprintf(stderr,
+        fprintf(STDERR_FILENO,
                 "Usage: %s <num_receivers> <num_pickers> <num_packers>"
                 " <queues_capacity> <inventory.csv>\n",
                 argv[0]);
@@ -143,21 +156,40 @@ int main(int argc, char *argv[])
     num_receivers  = atoi(argv[1]);
     num_pickers    = atoi(argv[2]);
     num_packers    = atoi(argv[3]);
-    queues_capacity = atoi(argv[4]);
+    queues_capacity = atoi(argv[4]);/*TODO: QUEUE CAP PUÒ STARE SOLOO NEL MAIN??*/
     if (num_receivers <= 0 || num_pickers <= 0 ||
         num_packers   <= 0 || queue_capacity <= 0) {
-        fprintf(stderr,
+        fprintf(STDERR_FILENO,
                 "[warehouse] Invalid arguments: all counters must be greather than 0\n");
         return EXIT_FAILURE;
         }
-    inventory_path = argv[5];
-    init_inventory(inventory_path, &inv);
+    inventory_path = argv[5];/*TODO: IL PATH PUÒ ESSERE SOLO NEL MAIN?*/
+    srand(time(NULL));
+    /*inizializziamo inventario*/
+    if (pthread_mutex_init(&g_inv.mutex, NULL) != 0) {
+        fprintf(STDERR_FILENO, "[warehouse]Failed to initialize inventory mutex\n")
+        return EXIT_FAILURE;
+    }
+    if (load_inventory(&inv, inv_path) != ERR_OK) {
+        fprintf(STDERR_FILENO, "[warehouse]Failed to load inventory");                 inv_path);
+        return EXIT_FAILURE;
+    }
+    load_inventory(&inv, inventory_path);
 
 }
 
-static void* load_inventory(const char *inventory_path);
+static void* load_inventory(Inventory* inv, const char *inventory_path){
+    int fd = open(inventory_path, O_RDONLY);
+    if ( fd == -1 ){
+        perror("Opening Inventory :");
+        return ERR_IO;
+    }
+    char buf[512];
+    inv->count = 0;
 
-static int queue_init(BoundedQueue *q, int capacity) {
+}
+
+static int queue_init(BoundedQueue *q, int capacity){
     q->buffer = malloc((size_t)capacity * sizeof(Order));
     if (!q->buffer) return -1; /*equivalente a buffer==NULL????*/
     q->head = q->tail = q->count = 0;

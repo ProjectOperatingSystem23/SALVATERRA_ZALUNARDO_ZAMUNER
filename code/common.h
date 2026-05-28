@@ -24,6 +24,7 @@
 /* ====== 1. IPC PATHS AND SYSTEM FILES ====================================== */
 #define ORDERS_FIFO          "/tmp/orders_fifo"   /* order.sh → warehouse    */
 #define RESTOCK_FIFO        "/tmp/restock_fifo" /* supplier → warehouse    */
+/*TODO: CAPIRE SE VA SOLO IN WAREHOUSE*/
 #define LOG_FILE             "orders.log"          /* scritto dai packer      */
 #define STATUS_FILE          "/tmp/wh_status.tmp"  /* dump SIGUSR1 warehouse  */
 #define WAREHOUSE_PID_FILE   "/tmp/warehouse.pid"  /* PID warehouse (bootstrap) */
