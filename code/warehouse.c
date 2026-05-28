@@ -186,8 +186,15 @@ static void* load_inventory(Inventory* inv, const char *inventory_path){
     }
     char buf[512];
     inv->count = 0;
-
+    /* Salta la riga header */
+    if (read_line_from_fd(fd, buf, sizeof(buf)) <= 0) {
+        fprintf(STDERR_FILENO, "[WAREHOUSE] Inventory vuoto o illeggibile.\n");
+        close(fd);
+        return ERR_IO;
+    }
 }
+
+
 
 static int queue_init(BoundedQueue *q, int capacity){
     q->buffer = malloc((size_t)capacity * sizeof(Order));
