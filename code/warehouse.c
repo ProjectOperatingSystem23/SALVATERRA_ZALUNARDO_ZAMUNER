@@ -16,7 +16,10 @@
  * perché sono fissi e condivisi da tutti i processi (warehouse, supplier).
  * getenv() aggiungerebbe complessità senza benefici: richiederebbe export
  * nel bootstrap e causerebbe crash non ovvi se la variabile fosse assente. */
-
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Constants definition
+ * ═══════════════════════════════════════════════════════════════════════════ */
+#define MAX_INV_SIZE   1024   /* upper bound sul numero di item nel CSV      */
 /* ═══════════════════════════════════════════════════════════════════════════
  * Data structures
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -48,19 +51,13 @@ typedef struct {
  * ------------ i receiver la inseriscono nella pending_orders_queue, i pickers consumano etc)----
  * ) ----------------- */
 typedef struct {
-    char client_id[MAX_CLIENT_ID];
-    int  item_id;
-    int  quantity;
-    int  shipped_qty;
-    int  status;
-    char response_fifo[MAX_RESP_FIFO];
+    OrderRequest request;
+    int  order_id; /*TODO: CONTATORE GLOBALE PER TENERE TRACCIA INTERNAMENTE DEGLI ORDINI*/
+    int  qty_shipped; /*TODO: si possono fare unsigned?*/
+    int qty_rejected;
+    OrderStatus status;
+    /*TODO: CI SERVE UN FIELD INT ERROR_CODE??*/
 } Order;
-
-typedef struct {
-    Item            *items;
-    int             count;
-    pthread_mutex_t mutex;          /* protects stock of every item */
-} Inventory;
 
 
 /* --- Bounded queue (circular buffer, mutex + 2 condvars) ----------------- */
@@ -74,6 +71,29 @@ typedef struct {
     int             shutdown; /*TODO: VEDERE SE CI STA  O FARE CON LE SENTINELLE*/ /* set to 1 to wake all blocked threads */
 } BoundedQueue;
 
+/* Strutture-argomento per pthread_create.
+ * Sono allocate in stack nel main e vivono finche' i thread non hanno fatto
+ * join, quindi puntare a esse e' sicuro (nessun use-after-free). */
+/*TODO: DEFINIRE LO SCOPE DEI FILE DESCRIPTOR, SE PASSARLI COME AROGMENTI DICHIARATI NEL MAIN*/
+/*TODO: SPIEGARE NEL REPORT LA SCELTA DI FARE PASSAGGI PER RIFERIMENTO AI THREAD INVECE DI METTERE TUTTO COME GLOBALE*/
+typedef struct{
+    int orders_fd;
+    BoundedQueue *pending_orders_q;
+} ReceiverArgs;
+
+typedef struct{
+    BoundedQueue *pending_orders_q;
+    BoundedQueue *packaging_q;
+} PickerArgs;
+
+typedef struct{
+    BoundedQueue *packaging_q;
+    int log_fd;
+} PackerArgs;
+
+typedef struct{
+    int supplier_fd;
+} RestockArgs;
 /* ═══════════════════════════════════════════════════════════════════════════
  * Variabili globali
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -81,6 +101,8 @@ static int num_receivers;
 static int num_pickers;
 static int num_packers;
 static int queues_capacity;
+
+static Inventory inv;
 static const char* inventory_path;
 
 /*TODO:SPOSTARE LE BOUNDED QUEUE IN MAIN*/
@@ -133,12 +155,26 @@ static void load_inventory(Inventory* inv ,const char *inventory_path);
 
 /*FUNZIONI SULLE QUEUE*/
 static int queue_init(BoundedQueue *q, int capacity);
-
-/* Inserisce un Order. Blocca se la coda e' piena.
- * Ritorna 0 in caso normale, -1 se la coda e' stata chiusa (shutdown). */
-static int queue_produce(BoundedQueue *q, const Order *order);
-
-static int queue_consume(BoundedQueue *q, Order *order);
+static int produce_in_queue(BoundedQueue *q, const Order *order);
+static int consume_from_queue(BoundedQueue *q, Order *order);
+/*?static void queue_destroy(BoundedQueue *queue);*/
+/*SIGNAL HANDLERS*/
+/*TODO:
+ *FARE PATTERN COME A LEZIONE SE SI PUO
+ *GLI HANDLER FANNO SOLO SETTING DI FLAG
+ */
+static void sigterm_handler(int sig);
+static void sigusr1_handler(int sig);
+/*HELPERS FUNCTIONS*/
+static int send_response(const char *resp_fifo, const OrderResponse *response);
+/*?static int write_status_snapshot(void);*/
+/*?static ssize_t read_all     (int fd, void *buf, size_t len);*/
+/*?static ssize_t write_all    (int fd, const void *buf, size_t len); */ /* in teoria non serve perche sizeof(orderRequest) è minore di PIPE_BUF*/
+static ssize_t read_line_from_fd (int fd, char *buf, size_t buf_size);
+static void log_order    (const Order *o);
+static void send_response(OrderResponse* respons eStruct);
+static void do_status_dump();
+static void do_shutdown(pthread_t *recv_th, pthread_t *pick_th,pthread_t *pack_th, pthread_t  rest_th);
 /* ═══════════════════════════════════════════════════════════════════════════
  * Main thread
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -207,7 +243,10 @@ static int queue_init(BoundedQueue *q, int capacity){
     return 0;
 }
 
-static int queue_produce(BoundedQueue *q, const Order *order) {
+/* Inserisce un Order. Blocca se la coda e' piena.
+ * Ritorna 0 in caso normale, -1 se la coda e' stata chiusa (shutdown). */
+/*TODO: ASSICURARSI SINCRONIZZAZIONE CHE ORA COME ORA È SUS: 1 MUTEX SIA PER PRODURRE CHE PER CONSUMARE VA BENE???*/
+static int produce_in_queue(BoundedQueue *q, const Order *order) {
     pthread_mutex_lock(&q->mutex);
     while (q->count == q->capacity && !q->done)
         pthread_cond_wait(&q->not_full, &q->mutex); /*PERCHÉ PRENDE IN INPUT ANCHE IL MUTEX???*/

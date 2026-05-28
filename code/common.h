@@ -105,13 +105,16 @@ typedef struct {
     char client_id[MAX_CLIENT_ID];
     char resp_fifo[MAX_RESP_FIFO];  /* path della FIFO privata del client */
     int  item_id;
-    int  quantity;
+    int  quantity; /*TODO: vedi se fare unsigned*/
 } OrderRequest;
 
 /* warehouse → order.sh (su resp_fifo privata del client) */
 //IL C HELPER di order.sh USA QUESTA STRUCT? si
 typedef struct {
-    int err_code;       /* ERR_* code */
+    /*char client_id[MAX_CLIENT_ID]; TODO: SERVE QUESTO FIELD?*/
+    int status;       /* ERR_* code */
+    int item_id;
+    int qty_requested;
     int qty_shipped;
     int qty_rejected;
 } OrderResponse;
