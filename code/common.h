@@ -111,7 +111,7 @@ typedef struct {
 /* warehouse → order.sh (su resp_fifo privata del client) */
 //IL C HELPER di order.sh USA QUESTA STRUCT? si
 typedef struct {
-    /*char client_id[MAX_CLIENT_ID]; TODO: SERVE QUESTO FIELD?*/
+    /*char client_id[MAX_CLIENT_ID]; TODO: SERVE QUESTO FIELD? probabilmente no*/
     int status;       /* ERR_* code */
     int item_id;
     int qty_requested;

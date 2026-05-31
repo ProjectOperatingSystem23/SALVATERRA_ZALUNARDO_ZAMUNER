@@ -19,7 +19,8 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * Constants definition
  * ═══════════════════════════════════════════════════════════════════════════ */
-#define MAX_INV_SIZE   1024   /* upper bound sul numero di item nel CSV      */
+#define MAX_INV_SIZE   1024   /* upper bound sul numero di item nel CSV */
+#define LINE_BUF       512 /*buffer per una riga di log o status*/
 /* ═══════════════════════════════════════════════════════════════════════════
  * Data structures
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -43,7 +44,7 @@ typedef struct {
 /* --- Inventory (Un'istanza di inventory per tenere traccia dell inventario (accesso sincronizzato) ----------------- */
 typedef struct {
     Item            *items;
-    int             count; /*forse si può togliere*/
+    int             count;
     pthread_mutex_t mutex;          /* protects stock of every item */
 } Inventory;
 
@@ -56,7 +57,7 @@ typedef struct {
     int  qty_shipped; /*TODO: si possono fare unsigned?*/
     int qty_rejected;
     OrderStatus status;
-    /*TODO: CI SERVE UN FIELD INT ERROR_CODE??*/
+    int error_code; /*TODO: CI SERVE UN FIELD INT ERROR_CODE??*/
 } Order;
 
 
