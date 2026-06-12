@@ -88,7 +88,8 @@
 #define MAX_INV_SIZE  1024   /* limite superiore sul numero di item nel CSV    */
 #define LINE_BUF       512   /* buffer per una riga di log / status            */
 #define RESTOCK_STOP_ID -1   /* supplier_id sentinella: inviato SOLO dal main
-      /*QUANDO LEGGE -1 CONTROLLA IL FLAG GLOBALE*//*                        * sulla propria write-end dummy per far uscire il
+                             /*QUANDO LEGGE -1 CONTROLLA IL FLAG GLOBALE*//*
+                              * sulla propria write-end dummy per far uscire il
                               * thread restock allo shutdown. Un RestockMsg
                               * esterno con id <= 0 e' comunque scartato come
                               * non valido, quindi non e' falsificabile in modo
@@ -409,7 +410,8 @@ static int bq_push(BoundedQueue *q, const Order *o)
     pthread_mutex_lock(&q->mutex);
     while (q->count == q->capacity && !q->shutdown)        /* pattern Lab04     */
         pthread_cond_wait(&q->not_full, &q->mutex);
-    if (q->count == q->capacity && q->shutdown) {          /* pieno e in chiusura */
+    if (q->count == q->capacity && q->shutdown) {/* pieno e in chiusura */
+        pthread_cond_signal(&q->not_full);   /* risveglio a catena (vedi bq_pop) */
         pthread_mutex_unlock(&q->mutex);
         return -1;
     }
@@ -432,6 +434,11 @@ static int bq_pop(BoundedQueue *q, Order *out)
     while (q->count == 0 && !q->shutdown)
         pthread_cond_wait(&q->not_empty, &q->mutex);
     if (q->count == 0) {                                   /* vuota + shutdown  */
+        /* RISVEGLIO A CATENA: prima di uscire risveglio il prossimo consumer
+         * in attesa, che a sua volta vedra' vuota+shutdown, risegnalera' e
+         * uscira'. Cosi' basta UNA pthread_cond_signal in bq_shutdown per
+         * svegliare tutti, senza bisogno di broadcast (Lab04 usa signal). */
+        pthread_cond_signal(&q->not_empty);
         pthread_mutex_unlock(&q->mutex);
         return -1;
     }
@@ -641,7 +648,9 @@ static void *receiver_thread(void *arg)
             if (g_shutdown) break;
             continue;
         }
-
+        /*siccome abbiamo letto da una fifo info da un processo esterno, per principio mettiamo il terminatore*/
+        req.client_id[MAX_CLIENT_ID - 1] = '\0';
+        req.resp_fifo[MAX_RESP_FIFO - 1] = '\0';
         /* order_id progressivo: contatore condiviso protetto da mutex */
         pthread_mutex_lock(a->oid_mutex);
         int oid = (*a->next_order_id)++;

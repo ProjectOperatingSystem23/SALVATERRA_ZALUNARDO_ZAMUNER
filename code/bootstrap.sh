@@ -252,6 +252,16 @@ rm -f "$ORDERS_FIFO" "$RESTOCK_FIFO" "$STATUS_FILE" \
       "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE" \
     || die "Errore: impossibile rimuovere i vecchi file runtime"
 
+# Log della run precedente: lo rimuoviamo cosi' il warehouse (che apre in
+# O_APPEND) riparte da un file vuoto e ./manage.sh report analizza SOLO la
+# run corrente, senza mischiare statistiche di run diverse.
+rm -f "$LOG_FILE" || die "Errore: impossibile rimuovere il vecchio $LOG_FILE"
+
+# FIFO di risposta orfane: se una run precedente e' stata uccisa a meta',
+# in /tmp possono restare le FIFO private dei client (order_resp_<PID>).
+# Nessun processo le usa piu': via anche quelle.
+rm -f /tmp/order_resp_* #TODO: capire chi le dealloca in una corretta esecuzione
+
 rm -rf "$CONF_DIR"   || die "Errore: impossibile rimuovere la vecchia $CONF_DIR"
 mkdir -p "$CONF_DIR" || die "Errore: impossibile creare la cartella $CONF_DIR"
 
