@@ -259,7 +259,7 @@ static void csv_field(char **pp, char *dst, int dst_size)
     if (*p == ',') p++;              /* salta il separatore                     */
     *pp = p;
 }
-
+/*sbarabac*/
 /* Legge una riga dall'fd nel buffer. Ritorna i byte letti, 0=EOF, -1=errore.
  * Lettura byte per byte: con i soli fd (niente stdio) non c'e' una "readline"
  * pronta; leggere 1 byte alla volta e' la soluzione piu' semplice e corretta,
