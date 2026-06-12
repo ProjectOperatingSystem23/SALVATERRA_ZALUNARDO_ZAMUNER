@@ -2,15 +2,20 @@
 # =============================================================================
 # bootstrap.sh  --  Avvio del Fulfillment Center (Project 2026-3)
 #
+# Uso (interfaccia obbligatoria, spec 2.3):
+#   ./bootstrap.sh <num_receivers> <num_pickers> <num_packers>
+#                  <queue_capacity> <num_suppliers> <inventory.csv>
+#
 # RUOLO (spec): e' lo script di "regia". Non elabora ordini: prepara l'ambiente
 # e accende i processi C, poi esce lasciandoli in esecuzione in background.
 # In ordine:
 #   1. valida gli argomenti e l'inventory.csv;
-#   2. ripulisce eventuale stato di una run precedente;
-#   3. crea le FIFO di IPC (Lab06);
-#   4. genera i file supplier_N.conf (un supplier per ogni item, + backup);
-#   5. lancia ./warehouse e i ./supplier, salvando i loro PID;
-#   6. stampa un recap e termina (i processi restano vivi).
+#   2. verifica che gli eseguibili siano compilati;
+#   3. ripulisce eventuale stato di una run precedente;
+#   4. crea le FIFO di IPC (Lab06);
+#   5. genera i file supplier_N.conf (round-robin: ogni item e' coperto);
+#   6. lancia ./warehouse e i ./supplier, salvando i loro PID;
+#   7. stampa un recap e termina (i processi restano vivi).
 #
 # Riferimenti corso:
 #   - Lab06 (IPC): FIFO / named pipe, mkfifo.
@@ -36,7 +41,7 @@ die() {
     err "$*"
     exit 1
 }
-#TODO: RIVEDERE IL CODICE
+
 # ---- Costanti: path delle FIFO e dei file di stato (coerenti con common.h) ----
 ORDERS_FIFO="/tmp/orders_fifo"          # order.sh            -> warehouse
 RESTOCK_FIFO="/tmp/restock_fifo"        # supplier/manage.sh  -> warehouse
@@ -76,8 +81,8 @@ on_exit() {
     trap - EXIT INT TERM HUP
 
     # Cleanup SOLO se l'avvio NON e' arrivato in fondo (BOOTSTRAP_SUCCESS=0) E
-    # avevamo gia' creato risorse runtime (RUNTIME_CREATED=1). Se tutto e' andato
-    # bene, i processi devono restare vivi: niente cleanup.
+    # avevamo gia' creato risorse runtime (RUNTIME_CREATED=1). Se tutto e'
+    # andato bene, i processi devono restare vivi: niente cleanup.
     if [ "$BOOTSTRAP_SUCCESS" -ne 1 ] && [ "$RUNTIME_CREATED" -eq 1 ]; then
         cleanup_runtime
     fi
@@ -85,21 +90,12 @@ on_exit() {
     exit "$rc"
 }
 
-# ---- Le quattro trap (risposta al TODO: "cosa fanno le trap? cos'e' HUP?") ----
-# Una "trap" associa del codice a un evento/segnale (Lab03 per i segnali,
-# Lab08 per l'uso negli script):
-#
+# ---- Le quattro trap (Lab03 per i segnali, Lab08 per l'uso negli script) ----
 #   EXIT -> pseudo-segnale: scatta a ogni uscita. Punto UNICO del cleanup.
 #   INT  -> SIGINT  (Ctrl-C da tastiera).               exit 128+2  = 130.
 #   TERM -> SIGTERM (kill "gentile", default di kill).  exit 128+15 = 143.
-#   HUP  -> SIGHUP  ("hangup"): arriva quando si CHIUDE il terminale che controlla
-#           lo script (storicamente: caduta della linea del modem). Tipico se si
-#           chiude la finestra del terminale.           exit 128+1  = 129.
-#
-# I codici 128+N sono la convenzione shell per "terminato dal segnale N": cosi'
-# chi chiama lo script capisce perche' e' uscito. Ogni trap di segnale fa
-# messaggio + exit; l'exit fa poi scattare la trap EXIT (on_exit), che ripulisce
-# una sola volta.
+#   HUP  -> SIGHUP  ("hangup"): chiusura del terminale. exit 128+1  = 129.
+# I codici 128+N sono la convenzione shell per "terminato dal segnale N".
 trap on_exit EXIT
 trap 'err "Interrotto (SIGINT)."; exit 130' INT
 trap 'err "Terminato (SIGTERM)."; exit 143' TERM
@@ -109,9 +105,6 @@ trap 'err "Hangup (SIGHUP)."; exit 129' HUP
 # VALIDAZIONE ARGOMENTI
 # ===========================================================================
 
-# Interfaccia obbligatoria (spec):
-#   ./bootstrap.sh <num_receivers> <num_pickers> <num_packers>
-#                  <queue_capacity> <num_suppliers> <inventory.csv>
 if [ $# -ne 6 ]; then
     die "Uso: $0 <num_receivers> <num_pickers> <num_packers> <queue_capacity> <num_suppliers> <inventory.csv>"
 fi
@@ -141,17 +134,15 @@ QUEUE_CAP=$((10#$QUEUE_CAP))
 NUM_SUPPLIERS=$((10#$NUM_SUPPLIERS))
 
 # ===========================================================================
-# VALIDAZIONE ESEGUIBILI
+# VALIDAZIONE ESEGUIBILI (spec 2.3: "verify whether the executables are built")
 # ===========================================================================
 
 # -f = file regolare, -x = eseguibile (test su file, Lab07).
-if [ ! -f "./warehouse" ] || [ ! -x "./warehouse" ]; then
-    die "Errore: ./warehouse non trovato o non eseguibile (compila con il Makefile)"
-fi
-
-if [ ! -f "./supplier" ] || [ ! -x "./supplier" ]; then
-    die "Errore: ./supplier non trovato o non eseguibile (compila con il Makefile)"
-fi
+for exe in ./warehouse ./supplier ./order_client ./restock_client; do
+    if [ ! -f "$exe" ] || [ ! -x "$exe" ]; then
+        die "Errore: $exe non trovato o non eseguibile (compila con: make build)"
+    fi
+done
 
 # ===========================================================================
 # VALIDAZIONE FORMATO INVENTARIO (inventory.csv)
@@ -177,13 +168,11 @@ if [ -n "$DUPLICATES" ]; then
     exit 1
 fi
 
-# Controllo riga per riga. Il '|| [ -n "$line" ]' legge anche l'ultima riga senza
-# '\n' finale. Lo "${line%$'\r'}" toglie un eventuale CR (file salvati su Windows
-# usano CRLF), cosi' i confronti non falliscono per un carattere invisibile.
-# NB: warehouse.c tollera gia' il '\r'; qui ci allineiamo.
-
-#TODO: NO IFS
-
+# Controllo riga per riga. "IFS= read -r" e' la forma corretta per leggere
+# righe senza che la shell tocchi spazi o backslash; il '|| [ -n "$line" ]'
+# legge anche l'ultima riga senza '\n' finale. Lo "${line%$'\r'}" toglie un
+# eventuale CR (file salvati su Windows usano CRLF), cosi' i confronti non
+# falliscono per un carattere invisibile. NB: warehouse.c tollera gia' il \r.
 LINE_NUM=0
 while IFS= read -r line || [ -n "$line" ]; do
     line=${line%$'\r'}
@@ -244,7 +233,7 @@ done < "$CSV_FILE"
 # PULIZIA DI UNA EVENTUALE RUN PRECEDENTE
 # ===========================================================================
 
-# kill -0 non invia segnali: verifica solo se il processo esiste (idioma Lab03).
+# kill -0 non invia segnali: verifica solo se il processo esiste (Lab03).
 if [ -f "$WAREHOUSE_PID_FILE" ]; then
     OLD_PID=$(cat "$WAREHOUSE_PID_FILE") || die "Errore: impossibile leggere $WAREHOUSE_PID_FILE"
 
@@ -282,10 +271,11 @@ mkfifo "$RESTOCK_FIFO" || die "Errore: impossibile creare $RESTOCK_FIFO"
 
 # Formato di ogni .conf: una riga header + N righe item:
 #   item_id,quantity_per_shipment,interval_seconds
-# Regola della spec: OGNI item deve essere coperto da almeno un supplier.
-RESTOCK_QTY=5            # unita' per spedizione di restock
-INTERVAL_MIN=5          # intervallo "normale" min (secondi)
-INTERVAL_MAX=15         # intervallo "normale" max (secondi)
+# Regole (spec 2.2.6): OGNI item deve essere coperto da almeno un supplier;
+# intervalli "ragionevoli" -> restiamo SEMPRE nella finestra 5..15 secondi.
+RESTOCK_QTY=5           # unita' per spedizione di restock
+INTERVAL_MIN=5          # intervallo minimo (secondi)
+INTERVAL_MAX=15         # intervallo massimo (secondi)
 INTERVAL_RANGE=$(( INTERVAL_MAX - INTERVAL_MIN + 1 ))
 
 NUM_ITEMS=$(( NUM_LINES - 1 ))   # righe dati = righe totali - header
@@ -297,11 +287,8 @@ for ((i = 1; i <= NUM_SUPPLIERS; i++)); do
         || die "Errore: impossibile scrivere $CONF_FILE"
 done
 
-# Distribuzione ROUND-ROBIN: ogni item va a un supplier, ciclando 1..NUM_SUPPLIERS.
-# Cosi' tutti gli item sono coperti e il carico e' bilanciato.
-
-#TODO: NO IFS
-
+# Distribuzione ROUND-ROBIN: ogni item va a un supplier, ciclando
+# 1..NUM_SUPPLIERS. Cosi' tutti gli item sono coperti e il carico bilanciato.
 SUPPLIER_IDX=1
 LINE_NUM=0
 while IFS= read -r line || [ -n "$line" ]; do
@@ -320,48 +307,19 @@ while IFS= read -r line || [ -n "$line" ]; do
     [ "$SUPPLIER_IDX" -gt "$NUM_SUPPLIERS" ] && SUPPLIER_IDX=1   # wrap-around
 done < "$CSV_FILE"
 
-# Se i supplier sono PIU' degli item, quelli in eccesso fanno da "backup": il
-# round-robin sopra ha gia' coperto ogni item; ai supplier extra diamo un item
-# casuale con intervalli piu' lunghi (sono di riserva).
-# NB: questi intervalli (15-60s) escono dalla finestra "normale" 5-15s: e' una
-# scelta di design per i backup -- da verificare con la consegna se 5-15s e' un
-# vincolo rigido.
+# Se i supplier sono PIU' degli item, il round-robin sopra ha gia' coperto
+# ogni item: ai supplier rimasti senza item assegniamo un item casuale
+# (fanno da "fornitore ridondante"), sempre con intervallo 5..15s.
 if [ "$NUM_SUPPLIERS" -gt "$NUM_ITEMS" ]; then
-    DOUBLE_ITEMS=$(( NUM_ITEMS * 2 ))
-
-    BACKUP_MIN=$INTERVAL_MAX                 # 15
-    BACKUP_MAX=$(( INTERVAL_MAX * 2 ))       # 30
-    BACKUP_RANGE=$(( BACKUP_MAX - BACKUP_MIN + 1 ))
-
-    SLOW_MIN=$(( INTERVAL_MAX * 2 ))         # 30
-    SLOW_MAX=$(( INTERVAL_MAX * 4 ))         # 60
-    SLOW_RANGE=$(( SLOW_MAX - SLOW_MIN + 1 ))
-
     for ((idx = NUM_ITEMS + 1; idx <= NUM_SUPPLIERS; idx++)); do
         RANDOM_LINE=$(( (RANDOM % NUM_ITEMS) + 1 ))   # quale riga dati pescare
 
-        LINE_NUM=0
-        RANDOM_ITEM=""
-        while IFS= read -r line || [ -n "$line" ]; do
-            line=${line%$'\r'}
-            LINE_NUM=$(( LINE_NUM + 1 ))
-            [ "$LINE_NUM" -eq 1 ] && continue         # salta l'header
-
-            DATA_LINE=$(( LINE_NUM - 1 ))
-            if [ "$DATA_LINE" -eq "$RANDOM_LINE" ]; then
-                RANDOM_ITEM=$(printf '%s\n' "$line" | cut -d',' -f1)
-                break
-            fi
-        done < "$CSV_FILE"
-
+        # tail -n +2 salta l'header; sed -n "Np" estrae la riga N-esima.
+        RANDOM_ITEM=$(tail -n +2 "$CSV_FILE" | sed -n "${RANDOM_LINE}p" \
+                        | tr -d '\r' | cut -d',' -f1)
         [ -z "$RANDOM_ITEM" ] && die "Errore: selezione item casuale fallita per supplier $idx"
 
-        # Primo "anello" di backup -> intervallo medio; oltre il doppio -> lento.
-        if [ "$idx" -gt "$DOUBLE_ITEMS" ]; then
-            INTERVAL=$(( (RANDOM % SLOW_RANGE) + SLOW_MIN ))
-        else
-            INTERVAL=$(( (RANDOM % BACKUP_RANGE) + BACKUP_MIN ))
-        fi
+        INTERVAL=$(( (RANDOM % INTERVAL_RANGE) + INTERVAL_MIN ))
 
         printf '%s,%s,%s\n' "$RANDOM_ITEM" "$RESTOCK_QTY" "$INTERVAL" \
             >> "$CONF_DIR/supplier_${idx}.conf" \
