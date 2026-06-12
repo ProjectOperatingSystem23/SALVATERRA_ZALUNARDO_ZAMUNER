@@ -2,7 +2,8 @@
 #define COMMON_H
 
 /* ============================================================================
- * common.h — Definizioni condivise tra warehouse, supplier e gli script Bash.
+ * common.h — Definizioni condivise tra warehouse, supplier, order_client,
+ *            restock_client e gli script Bash.
  *
  * Questo file e' l'INTERFACCIA BINARIA del sistema. Tutti i processi che si
  * scambiano messaggi via FIFO devono includere ESATTAMENTE questa stessa
@@ -12,7 +13,7 @@
  * Contiene:
  *   - path delle FIFO e dei file di sistema
  *   - error codes condivisi (stessi numeri usati da Bash via $?)
- *   - limiti di dimensione dei campi string
+ *   - limiti di dimensione dei campi stringa
  *   - le tre struct wire-format scambiate sulle FIFO
  *
  * Non contiene: strutture interne al solo warehouse (Inventory, BoundedQueue,
@@ -22,96 +23,76 @@
  * ============================================================================ */
 
 /* ====== 1. IPC PATHS AND SYSTEM FILES ====================================== */
-#define ORDERS_FIFO          "/tmp/orders_fifo"   /* order.sh → warehouse    */
-#define RESTOCK_FIFO        "/tmp/restock_fifo" /* supplier → warehouse    */
-/*TODO: CAPIRE SE VA SOLO IN WAREHOUSE*/
-#define LOG_FILE             "orders.log"          /* scritto dai packer      */
-#define STATUS_FILE          "/tmp/wh_status.tmp"  /* dump SIGUSR1 warehouse  */
+#define ORDERS_FIFO          "/tmp/orders_fifo"    /* order.sh  -> warehouse    */
+#define RESTOCK_FIFO         "/tmp/restock_fifo"   /* supplier  -> warehouse    */
+#define RESP_FIFO_TEMPLATE   "/tmp/order_resp_%d"  /* warehouse -> order_client
+                                                    * (una FIFO privata per
+                                                    * client, %d = PID)         */
+#define LOG_FILE             "orders.log"          /* scritto dai packer        */
+#define STATUS_FILE          "/tmp/wh_status.tmp"  /* dump SIGUSR1 warehouse    */
 #define WAREHOUSE_PID_FILE   "/tmp/warehouse.pid"  /* PID warehouse (bootstrap) */
 #define SUPPLIERS_PID_FILE   "/tmp/suppliers.pid"  /* PID supplier (bootstrap)  */
 
 /* ====== 2. ERROR CODES ===================================================== */
-/* ═══════════════════════════════════════════════════════════════════════════
- * Error codes  (valori numerici condivisi con gli script Bash)
- *
- * In Bash usare le stesse costanti numeriche, es:
- *   ERR_OK=0  ERR_ITEM_NOT_FOUND=1  ERR_OUT_OF_STOCK=2 ...
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* Valori numerici condivisi con gli script Bash, che definiscono le stesse
+ * costanti (ERR_OK=0, ERR_ITEM_NOT_FOUND=1, ...) e le confrontano con $?.
+ * La spec (2.2.9) richiede che C e Bash usino gli stessi valori, non che il
+ * file sia fisicamente condiviso. */
+
 /*TODO: VEDERE QUANDO VENGONO USATI*/
-#define ERR_OK              0   /* Successo */
-#define ERR_ITEM_NOT_FOUND  1   /* item_id non presente in inventario          */
-#define ERR_OUT_OF_STOCK    2   /* item presente ma stock == 0                 */
-#define ERR_INVALID_QTY     3   /* quantità <= 0                               */
-#define ERR_QUEUE_FULL      4   /* bounded buffer pieno (nN attivamente) */
-#define ERR_IO              5   /* errore di I/O (file, FIFO, ecc.)            */
-#define ERR_PARTIAL         6   /* consegna parziale: shipped < requested      */
-#define ERR_SHUTTING_DOWN    7   /* warehouse non accetta nuovi ordini */
-#define ERR_WAREHOUSE_DOWN   8   /* order.sh/manage.sh non trova warehouse */
-#define ERR_TIMEOUT          9   /* attesa risposta IPC scaduta */
-/* ====== 3. STRING FIELDS SIZE LIMITS =========================== */
-/* ═══════════════════════════════════════════════════════════════════════════
- * Limiti di dimensione dei campi nelle struct wire-format
- * ═══════════════════════════════════════════════════════════════════════════ */
+#define ERR_OK              0   /* successo                                     */
+#define ERR_ITEM_NOT_FOUND  1   /* item_id non presente in inventario           */
+#define ERR_OUT_OF_STOCK    2   /* item presente ma stock == 0                  */
+#define ERR_INVALID_QTY     3   /* quantita' <= 0                               */
+#define ERR_QUEUE_FULL      4   /* bounded buffer pieno (non usato attivamente:
+                                 * i producer BLOCCANO invece di fallire, come
+                                 * richiesto dalla spec 2.2.5; definito per
+                                 * completezza dell'insieme di codici)          */
+#define ERR_IO              5   /* errore di I/O (file, FIFO, ecc.)             */
+#define ERR_PARTIAL         6   /* consegna parziale: shipped < requested       */
+#define ERR_SHUTTING_DOWN   7   /* warehouse non accetta nuovi ordini           */
+#define ERR_WAREHOUSE_DOWN  8   /* order.sh/manage.sh non trova il warehouse    */
+#define ERR_TIMEOUT         9   /* attesa risposta IPC scaduta                  */
+#define ERR_USAGE          10   /* argomenti errati (script e helper C)         */
+
+/* ====== 3. STRING FIELD SIZE LIMITS ======================================== */
 #define MAX_CLIENT_ID   64
-#define MAX_DESC       128 /* ci sta*/
-#define MAX_CATEGORY    64 /* ci sta */
+#define MAX_DESC       128
+#define MAX_CATEGORY    64
 #define MAX_RESP_FIFO  256
 
-/* ====== 4. SENTINEL VALUES ================================================= */
-/* -------------------------------------------------------------------------
- * SENTINEL
- * Valori speciali usati durante lo shutdown per sbloccare thread in attesa.
- * Un receiver che legge un OrderMsg con item_id == SENTINEL_ITEM_ID sa
- * che deve uscire. Stesso principio per RestockMsg.
- * ------------------------------------------------------------------------- */
-/*TODO: ATTENZIONE A:*/
-/* ATTENZIONE: il warehouse deve rifiutare (ERR_ITEM_NOT_FOUND) qualsiasi
-* ordine client con item_id <= 0, per evitare che un client malevolo invii
-* il valore sentinel durante il normale funzionamento.*/
-
-#define SENTINEL_ITEM_ID     -1
-#define SENTINEL_SUPPLIER_ID -1
-
+/* ====== 4. SPECIAL VALUES ================================================== */
 /*
  * MANUAL_RESTOCK_SUPPLIER_ID
- * Usato da manage.sh per inviare un restock manuale via RESTOCK_FIFO,
- * riutilizzando la stessa struct RestockMsg dei supplier reali.
- * Il warehouse distingue: supplier_id == 0 → restock manuale,
- *                         supplier_id >= 1 → supplier reale.
- * sizeof(RestockMsg) = 12 B < PIPE_BUF (>= 4096 B): write atomica garantita
- * anche con supplier reali che scrivono contemporaneamente (man 7 pipe).
+ * Usato da manage.sh (tramite l'helper restock_client) per inviare un restock
+ * manuale via RESTOCK_FIFO, riutilizzando la stessa struct RestockMsg dei
+ * supplier reali. Il warehouse distingue:
+ *   supplier_id == 0 -> restock manuale,
+ *   supplier_id >= 1 -> supplier reale.
+ *
+ * NB: il warehouse rifiuta (ERR_ITEM_NOT_FOUND) qualsiasi ordine con
+ * item_id <= 0 e qualsiasi restock con item_id o quantity <= 0: nessun
+ * valore "speciale" puo' essere iniettato dall'esterno.
  */
-/*TODO: VEDERE QUANDO CI ARRIVIAMO SE SERVE QUESTO*/
 #define MANUAL_RESTOCK_SUPPLIER_ID  0
 
-/* ====== 5. COMMON STRUCTS ================================================== */
+/* ====== 5. WIRE-FORMAT STRUCTS ============================================= */
+/* Queste tre struct attraversano i confini di processo: vengono scritte e
+ * lette come blocchi BINARI (write/read di sizeof(struct)). Su Linux una
+ * write su FIFO di dimensione < PIPE_BUF (>= 4096 byte) e' ATOMICA, quindi i
+ * messaggi di writer concorrenti non si mischiano (man 7 pipe). Tutte e tre
+ * le struct stanno ampiamente sotto questo limite. */
 
-//WIRE FORMAT : MESSAGE PASSING
-/* Queste tre struct attraversano i confini di processo: vengono scritte come
- * blocchi BINARI (write/read di sizeof(struct)). Su FIFO Linux la write
- * < PIPE_BUF byte (>= 4096) e' atomica, quindi messaggi di writer
- * concorrenti non si mischiano (man 7 pipe). */
-/* ═══════════════════════════════════════════════════════════════════════════
- * Struct wire-format: messaggi scambiati tra processi via FIFO
- *
- * ATTENZIONE: queste struct vengono scritte e lette come blocchi binari
- * (write/read di sizeof(struct)). Tutti i processi devono usare esattamente
- * la stessa definizione — per questo stanno in common.h.
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-/* order.sh → warehouse (su ORDERS_FIFO) */
-//USATA DAL C HELPER DI order.sh
+/* order_client -> warehouse (su ORDERS_FIFO) */
 typedef struct {
     char client_id[MAX_CLIENT_ID];
     char resp_fifo[MAX_RESP_FIFO];  /* path della FIFO privata del client */
     int  item_id;
-    int  quantity; /*TODO: vedi se fare unsigned*/
+    int  quantity;
 } OrderRequest;
 
-/* warehouse → order.sh (su resp_fifo privata del client) */
-//IL C HELPER di order.sh USA QUESTA STRUCT? si
+/* warehouse -> order_client (sulla resp_fifo privata del client) */
 typedef struct {
-    /*char client_id[MAX_CLIENT_ID]; TODO: SERVE QUESTO FIELD? probabilmente no*/
     int status;       /* ERR_* code */
     int item_id;
     int qty_requested;
@@ -119,7 +100,7 @@ typedef struct {
     int qty_rejected;
 } OrderResponse;
 
-/* supplier → warehouse (su RESTOCK_FIFO) */
+/* supplier / restock_client -> warehouse (su RESTOCK_FIFO) */
 typedef struct {
     int supplier_id;
     int item_id;

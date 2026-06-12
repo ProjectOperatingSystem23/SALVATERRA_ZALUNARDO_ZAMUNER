@@ -342,13 +342,14 @@ printf '%s\n' "$WAREHOUSE_PID" > "$WAREHOUSE_PID_FILE" \
 
 # Diamo al warehouse un istante per inizializzarsi (FIFO, CSV); poi verifichiamo
 # che sia ancora vivo. Se e' morto, inutile avviare i supplier.
-sleep 1
+sleep 1 #TODO: chiedere al franzil se va bene o meglio sleep 2 o altro
 if ! kill -0 "$WAREHOUSE_PID" 2>/dev/null; then
     die "Errore: il warehouse e' terminato durante l'avvio"
 fi
 
 # Svuotiamo (o creiamo) il file dei PID dei supplier: uno per riga.
-: > "$SUPPLIERS_PID_FILE" || die "Errore: impossibile creare $SUPPLIERS_PID_FILE"
+# true non fa nulla, il > richiede un comando prima sennò da errore
+true > "$SUPPLIERS_PID_FILE" || die "Errore: impossibile creare $SUPPLIERS_PID_FILE"
 
 for ((i = 1; i <= NUM_SUPPLIERS; i++)); do
     ./supplier "$i" "$CONF_DIR/supplier_${i}.conf" &
