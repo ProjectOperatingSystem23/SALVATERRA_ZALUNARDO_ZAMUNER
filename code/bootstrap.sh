@@ -136,7 +136,7 @@ NUM_SUPPLIERS=$((10#$NUM_SUPPLIERS))
 # ===========================================================================
 # VALIDAZIONE ESEGUIBILI (spec 2.3: "verify whether the executables are built")
 # ===========================================================================
-
+#TODO: controllare che il path di order client (c helper) sia congruente con quello in order.sh
 # -f = file regolare, -x = eseguibile (test su file, Lab07).
 for exe in ./warehouse ./supplier ./order_client ./restock_client; do
     if [ ! -f "$exe" ] || [ ! -x "$exe" ]; then
@@ -260,7 +260,7 @@ rm -f "$LOG_FILE" || die "Errore: impossibile rimuovere il vecchio $LOG_FILE"
 # FIFO di risposta orfane: se una run precedente e' stata uccisa a meta',
 # in /tmp possono restare le FIFO private dei client (order_resp_<PID>).
 # Nessun processo le usa piu': via anche quelle.
-rm -f /tmp/order_resp_* #TODO: capire chi le dealloca in una corretta esecuzione
+rm -f /tmp/order_resp_*
 
 rm -rf "$CONF_DIR"   || die "Errore: impossibile rimuovere la vecchia $CONF_DIR"
 mkdir -p "$CONF_DIR" || die "Errore: impossibile creare la cartella $CONF_DIR"

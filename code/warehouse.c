@@ -88,8 +88,7 @@
 #define MAX_INV_SIZE  1024   /* limite superiore sul numero di item nel CSV    */
 #define LINE_BUF       512   /* buffer per una riga di log / status            */
 #define RESTOCK_STOP_ID -1   /* supplier_id sentinella: inviato SOLO dal main
-                             /*QUANDO LEGGE -1 CONTROLLA IL FLAG GLOBALE*//*
-                              * sulla propria write-end dummy per far uscire il
+                             /* sulla propria write-end dummy per far uscire il
                               * thread restock allo shutdown. Un RestockMsg
                               * esterno con id <= 0 e' comunque scartato come
                               * non valido, quindi non e' falsificabile in modo
@@ -385,9 +384,22 @@ static int bq_init(BoundedQueue *q, int capacity)
     q->head = q->tail = q->count = 0;
     q->capacity = capacity;
     q->shutdown = 0;
-    if (pthread_mutex_init(&q->mutex,     NULL) != 0) { free(q->buffer); return ERR_IO; }
-    if (pthread_cond_init (&q->not_full,  NULL) != 0) { free(q->buffer); return ERR_IO; }
-    if (pthread_cond_init (&q->not_empty, NULL) != 0) { free(q->buffer); return ERR_IO; }
+
+    if (pthread_mutex_init(&q->mutex, NULL) != 0) {
+        free(q->buffer);
+        return ERR_IO;
+    }
+    if (pthread_cond_init(&q->not_empty, NULL) != 0) {
+        pthread_mutex_destroy(&q->mutex);
+        free(q->buffer);
+        return ERR_IO;
+    }
+    if (pthread_cond_init(&q->not_full, NULL) != 0) {
+        pthread_cond_destroy(&q->not_empty);
+        pthread_mutex_destroy(&q->mutex);
+        free(q->buffer);
+        return ERR_IO;
+    }
     return ERR_OK;
 }
 
@@ -449,7 +461,7 @@ static int bq_pop(BoundedQueue *q, Order *out)
     pthread_mutex_unlock(&q->mutex);
     return 0;
 }
-/*TODO: MA SE VENGONO JOINATI PRIMA DI FARE SHUTDOWN, CHE THREAD CI SONO BLOCCATI??*/
+
 /* Alza shutdown e sveglia TUTTI i thread bloccati sulle due condvar. */
 static void bq_shutdown(BoundedQueue *q)
 {
@@ -800,7 +812,7 @@ static void *restock_thread(void *arg)
         ssize_t n = read_all(a->restock_fd, &msg, sizeof(msg));
 
         if (n == 0) break;                          /* EOF: nessun writer       */
-        if (n != (ssize_t)sizeof(msg)) { /*quando main scrive -1 entra nell if*/
+        if (n != (ssize_t)sizeof(msg)) {
             if (n < 0) perror("[RESTOCK] read");    /* EINTR gestito in read_all */
             if (g_shutdown) break;
             continue;

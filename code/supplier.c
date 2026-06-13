@@ -93,7 +93,7 @@ static ssize_t write_all(int fd, const void *buf, size_t len)
     while (done < len) {
         ssize_t n = write(fd, (const char *)buf + done, len - done);
         if (n < 0) {
-            if (errno == EINTR) continue; /*TODO: VEDERE SE BISOGNA CONTROLLARE IL FLAG DI STOP, O SE PREFERIBILMENTE SI PUÒ FARE NEL MAIN QUANDO CHIAMIAMO LA FUNZIONE*/
+            if (errno == EINTR) continue;
             return -1;
         }
         done += (size_t)n;
@@ -165,12 +165,12 @@ static int load_config(const char *path, SupplyPlan *plan, int max_items)
         it->countdown = it->interval;   /* prima consegna dopo 1 intervallo */
         count++;
     }
-    close(fd);
     if (n < 0) {
         fprintf(stderr, "[SUPPLIER] read '%s': %s\n", path, strerror(errno));
         close(fd);
         return -1;
     }
+    close(fd);
     if (count == 0) {
         fprintf(stderr, "[SUPPLIER] '%s': nessun item valido\n", path);
         return -1;
@@ -237,7 +237,7 @@ int main(int argc, char *argv[])
         /* 3. aggiorna i countdown e spedisci gli item arrivati a zero */
         for (int i = 0; i < n_items; i++) {
             plan[i].countdown -= slept;
-            if (plan[i].countdown < 0) plan[i].countdown = 0; /*TODO: CAPIRE SE IL COUNTDOWN PUÒ MAI ESSERE <0*/
+            /* countdown >= 0 per costruzione (slept <= min_cd <= countdown), non serve fare clipping a 0*/
             if (plan[i].countdown > 0) continue;
 
             RestockMsg msg = { supplier_id, plan[i].item_id, plan[i].quantity };
