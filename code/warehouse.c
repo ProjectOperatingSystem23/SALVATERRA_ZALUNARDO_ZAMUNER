@@ -467,8 +467,8 @@ static void bq_shutdown(BoundedQueue *q)
 {
     pthread_mutex_lock(&q->mutex);
     q->shutdown = 1;
-    pthread_cond_broadcast(&q->not_full);
-    pthread_cond_broadcast(&q->not_empty);
+    pthread_cond_signal(&q->not_full);
+    pthread_cond_signal(&q->not_empty);
     pthread_mutex_unlock(&q->mutex);
 }
 
