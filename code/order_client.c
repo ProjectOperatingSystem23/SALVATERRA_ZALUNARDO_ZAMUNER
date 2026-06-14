@@ -84,7 +84,6 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <errno.h>
-#include <sys/stat.h>     /* mkfifo */
 #include "common.h"
 
 /* Attesa massima (secondi) per la risposta del warehouse: rete di sicurezza per
