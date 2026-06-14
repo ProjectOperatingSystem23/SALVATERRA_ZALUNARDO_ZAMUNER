@@ -99,36 +99,8 @@ static volatile sig_atomic_t g_pipe      = 0;   /* alzato da SIGPIPE (wh morto) 
 static void on_alarm(int sig) { (void)sig; g_timed_out = 1; }
 static void on_pipe (int sig) { (void)sig; g_pipe      = 1; }
 
-/* sigaction senza SA_RESTART (identico a supplier.c): le syscall vanno
- * INTERROTTE dal segnale, altrimenti l'alarm non potrebbe sbloccare la read. */
-static void setup_handler(int sig, void (*fn)(int))/*TODO: considerare common.c*/
-{
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = fn;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sigaction(sig, &sa, NULL);
-}
-
 /* ====== I/O di basso livello (Lab05) ======================================= */
 
-/* write "completa" con gestione EINTR (identica a supplier/warehouse). La usiamo
- * per l'OrderRequest: 328 byte << 64KB, quindi non blocca mai -> l'unico errore
- * realistico e' EPIPE (warehouse morto). */
-static ssize_t write_all(int fd, const void *buf, size_t len)/*TODO: considerare common.c*/
-{
-    size_t done = 0;
-    while (done < len) {
-        ssize_t n = write(fd, (const char *)buf + done, len - done);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        done += (size_t)n;
-    }
-    return (ssize_t)done;
-}
 
 /* read "completa" della risposta, SENSIBILE AL TIMEOUT. A differenza della
  * read_all del warehouse, su EINTR NON riprendiamo ciecamente: se l'interruzione
@@ -213,34 +185,10 @@ int main(int argc, char *argv[])
     char resp_path[MAX_RESP_FIFO];
     snprintf(resp_path, sizeof(resp_path), RESP_FIFO_TEMPLATE, (int)getpid());
 
-    if (mkfifo(resp_path, 0600) < 0 && errno != EEXIST) {
-        fprintf(stderr, "[ORDER] mkfifo '%s': %s\n", resp_path, strerror(errno));
-        return ERR_IO;
-    }
-
-    /* ---- 2. apri la resp_fifo PRIMA di inviare (vedi protocollo in testa) ----
-     * Stesso schema di open_fifo_rw del warehouse: read-end O_NONBLOCK + dummy
-     * write-end + fcntl per togliere O_NONBLOCK (read finale bloccante). */
-    /*TODO: si può usare la stessa funzione del warehouse e la mettiamo in common.c?
-     *solito pattern write end dummy, almeno streamliniamo considerare di mettere i permessi
-     * come un parametro della funzione per generalizzare*/
-
-    int rfd = open(resp_path, O_RDONLY | O_NONBLOCK);
-    if (rfd < 0) {
-        fprintf(stderr, "[ORDER] open(read) '%s': %s\n", resp_path, strerror(errno));
-        unlink(resp_path);
-        return ERR_IO;
-    }
-    int wdummy = open(resp_path, O_WRONLY);   /* read-end gia' aperta: non blocca */
-    if (wdummy < 0) {
-        fprintf(stderr, "[ORDER] open(dummy write) '%s': %s\n", resp_path, strerror(errno));
-        close(rfd); unlink(resp_path);
-        return ERR_IO;
-    }
-    int fl = fcntl(rfd, F_GETFL, 0);
-    if (fl < 0 || fcntl(rfd, F_SETFL, fl & ~O_NONBLOCK) < 0) {
-        fprintf(stderr, "[ORDER] fcntl '%s': %s\n", resp_path, strerror(errno));
-        close(rfd); close(wdummy); unlink(resp_path);
+    int rfd, wdummy;
+    if (open_fifo_rw(resp_path, 0600, &rfd, &wdummy) != 0) {
+        fprintf(stderr, "[ORDER] init resp_fifo '%s': %s\n", resp_path, strerror(errno));
+        unlink(resp_path);              /* se mkfifo l'aveva creata, la rimuoviamo */
         return ERR_IO;
     }
 

@@ -74,50 +74,12 @@ static void handle_stop(int sig) { (void)sig; g_stop = 1; }
  * il segnale ritorna -1 con errno=EPIPE (gestito al punto di chiamata);
  * qui in piu' alziamo g_stop, perche' senza warehouse non c'e' altro da fare. */
 
-static void setup_handler(int sig, void (*fn)(int))
-{
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = fn;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;              /* niente SA_RESTART: la sleep va interrotta */
-    sigaction(sig, &sa, NULL);
-}
-
-/* ====== I/O di basso livello (Lab05) ======================================= */
-
-/* write "completa" con gestione EINTR (Lab05). */
-static ssize_t write_all(int fd, const void *buf, size_t len)
-{
-    size_t done = 0;
-    while (done < len) {
-        ssize_t n = write(fd, (const char *)buf + done, len - done);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        done += (size_t)n;
-    }
-    return (ssize_t)done;
-}
-
-/* Legge una riga da fd byte per byte. Ritorna bytes letti, 0=EOF, -1=errore. */
-static ssize_t fd_read_line(int fd, char *buf, size_t size)
-{
-    size_t i = 0;
-    while (i < size - 1) {
-        char c;
-        ssize_t n = read(fd, &c, 1);
-        if (n < 0) { if (errno == EINTR) continue; return -1; }
-        if (n == 0) break;
-        buf[i++] = c;
-        if (c == '\n') break;
-    }
-    buf[i] = '\0';
-    return (ssize_t)i;
-}
-
 /* ====== Parsing del .conf =================================================== */
+/* csv_field() NON va in common.c: risolve un problema specifico del warehouse
+ * (campi stringa potenzialmente quotati nell'inventario CSV). Il supplier usa
+ * sscanf("%d,%d,%d") perche' il suo .conf ha solo interi, generati da
+ * bootstrap.sh. Regola: in common.c vanno solo funzioni usate da piu' file
+ * con lo STESSO identico scopo (es. write_all, setup_handler). */
 static int load_config(const char *path, SupplyPlan *plan, int max_items)
 {
     int fd = open(path, O_RDONLY);

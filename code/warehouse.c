@@ -215,21 +215,7 @@ static ssize_t read_all(int fd, void *buf, size_t len)
     return (ssize_t)done;
 }
 
-/* write "completa": ripete la write finche' non ha scritto len byte (Lab05). */
-static ssize_t write_all(int fd, const void *buf, size_t len)
-{
-    size_t done = 0;
-    while (done < len) {
-        ssize_t n = write(fd, (const char *)buf + done, len - done);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        done += (size_t)n;
-    }
-    return (ssize_t)done;
-}
-
+/* write_all(): definita in common.c (helper condiviso). */
 /* ═══════════════════════════════════════════════════════════════════════════
  * Inventario: caricamento da CSV via file descriptor + accesso sincronizzato
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -237,7 +223,7 @@ static ssize_t write_all(int fd, const void *buf, size_t len)
 /* Estrae UN campo CSV dal cursore *pp. Gestisce sia campi "tra virgolette"
  * (es. "Wireless Mouse") sia campi semplici. Avanza *pp oltre il campo e la
  * virgola successiva. Scrive al massimo dst_size-1 byte e NUL-termina. */
-static void csv_field(char **pp, char *dst, int dst_size)
+static void csv_field(char **pp, char *dst, int dst_size) /*TODO: mettere in common.c?*/
 {
     char *p = *pp;
     int   i = 0;
@@ -258,26 +244,6 @@ static void csv_field(char **pp, char *dst, int dst_size)
     dst[i] = '\0';
     if (*p == ',') p++;              /* salta il separatore                     */
     *pp = p;
-}
-
-/* Legge una riga dall'fd nel buffer. Ritorna i byte letti, 0=EOF, -1=errore.
- * Lettura byte per byte: con i soli fd (niente stdio) non c'e' una "readline"
- * pronta; leggere 1 byte alla volta e' la soluzione piu' semplice e corretta,
- * e il caricamento del CSV avviene una sola volta all'avvio, quindi
- * l'inefficienza e' irrilevante. */
-static ssize_t fd_read_line(int fd, char *buf, size_t size)
-{
-    size_t i = 0;
-    while (i < size - 1) {
-        char c;
-        ssize_t n = read(fd, &c, 1);
-        if (n < 0) { if (errno == EINTR) continue; return -1; }
-        if (n == 0) break;
-        buf[i++] = c;
-        if (c == '\n') break;
-    }
-    buf[i] = '\0';
-    return (ssize_t)i;
 }
 
 static int inventory_load(Inventory *inv, const char *path)
@@ -556,16 +522,8 @@ static void rand_sleep_1_3(void)
 static void handle_shutdown(int sig) { (void)sig; g_shutdown    = 1; }
 static void handle_dump    (int sig) { (void)sig; g_dump_status = 1; }
 
-/* Helper per registrare un handler con sigaction (pattern Lab03/Lab04). */
-static void setup_handler(int sig, void (*fn)(int))
-{
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = fn;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sigaction(sig, &sa, NULL);
-}
+/* setup_handler(): definita in common.c (helper condiviso). */
+
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Dump dello stato su STATUS_FILE (per manage.sh status)
@@ -849,34 +807,8 @@ static void *restock_thread(void *arg)
  *   3. fcntl per togliere O_NONBLOCK dal read-end: d'ora in poi le read dei
  *      thread sono BLOCCANTI (i thread dormono, niente busy-wait, spec 2.2.5).
  * ═══════════════════════════════════════════════════════════════════════════ */
-static int open_fifo_rw(const char *path, int *read_fd, int *dummy_write_fd)
-{
-    if (mkfifo(path, 0666) != 0 && errno != EEXIST) {   /* idempotente          */
-        fprintf(stderr, "[WAREHOUSE] mkfifo '%s': %s\n", path, strerror(errno));
-        return -1;
-    }
-    int rfd = open(path, O_RDONLY | O_NONBLOCK);
-    if (rfd < 0) {
-        fprintf(stderr, "[WAREHOUSE] open(read) '%s': %s\n", path, strerror(errno));
-        return -1;
-    }
-    int wfd = open(path, O_WRONLY);                      /* dummy write-end     */
-    if (wfd < 0) {
-        fprintf(stderr, "[WAREHOUSE] open(write) '%s': %s\n", path, strerror(errno));
-        close(rfd);
-        return -1;
-    }
-    /*TODO: QUESTI COMANDI NON SONO NEI LAB, VA BENE USARLI MA ESSERE PRONTI ALLE FRANZILLATE*/
-    int fl = fcntl(rfd, F_GETFL, 0);                    /* togli O_NONBLOCK:   */
-    if (fl < 0 || fcntl(rfd, F_SETFL, fl & ~O_NONBLOCK) < 0) {
-        fprintf(stderr, "[WAREHOUSE] fcntl '%s': %s\n", path, strerror(errno));
-        close(rfd); close(wfd);
-        return -1;
-    }
-    *read_fd = rfd;
-    *dummy_write_fd = wfd;
-    return 0;
-}
+
+/* open_fifo_rw(): definita in common.c (helper condiviso, vedi common.h). */
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * MAIN
@@ -932,8 +864,14 @@ int main(int argc, char *argv[])
 
     /* ---- FIFO (Lab06) ---- */
     int orders_fd, orders_dummy_fd, restock_fd, restock_dummy_fd;
-    if (open_fifo_rw(ORDERS_FIFO,  &orders_fd,  &orders_dummy_fd)  != 0) return EXIT_FAILURE;
-    if (open_fifo_rw(RESTOCK_FIFO, &restock_fd, &restock_dummy_fd) != 0) return EXIT_FAILURE;
+    if (open_fifo_rw(ORDERS_FIFO,  0666, &orders_fd,  &orders_dummy_fd)  != 0) {
+        fprintf(stderr, "[WAREHOUSE] init FIFO '%s': %s\n", ORDERS_FIFO, strerror(errno));
+        return EXIT_FAILURE;
+    }
+    if (open_fifo_rw(RESTOCK_FIFO, 0666, &restock_fd, &restock_dummy_fd) != 0) {
+        fprintf(stderr, "[WAREHOUSE] init FIFO '%s': %s\n", RESTOCK_FIFO, strerror(errno));
+        return EXIT_FAILURE;
+    }
     pthread_mutex_t orders_read_mutex;
     pthread_mutex_init(&orders_read_mutex, NULL);
 

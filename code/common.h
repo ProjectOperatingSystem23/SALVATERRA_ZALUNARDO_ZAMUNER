@@ -1,6 +1,9 @@
 #ifndef COMMON_H
 #define COMMON_H
 
+#include <sys/types.h>  /* ssize_t, mode_t (per i prototipi degli helper) */
+#include <stddef.h>     /* size_t */
+
 /* ============================================================================
  * common.h — Definizioni condivise tra warehouse, supplier, order_client,
  *            restock_client e gli script Bash.
@@ -106,5 +109,28 @@ typedef struct {
     int item_id;
     int quantity;
 } RestockMsg;
+
+/* ====== 6. HELPER CONDIVISI (definiti in common.c) ========================= */
+/* Funzioni identiche usate da warehouse, supplier e order_client: definite UNA
+ * sola volta in common.c e linkate in tutti gli eseguibili (DRY, niente
+ * divergenze). I flag dei segnali (g_stop, g_timed_out, ...) restano invece
+ * locali a ciascun processo perche' sono stato per-processo. */
+
+/* Installa un handler per 'sig' con sigaction, SENZA SA_RESTART: le syscall
+ * lente vengono interrotte dai segnali (serve per alarm/sleep). (Lab03) */
+void setup_handler(int sig, void (*fn)(int));
+
+/* write "completa": ripete la write finche' tutti i 'len' byte sono usciti,
+ * riprovando su EINTR. Ritorna len, oppure -1 con errno settato. (Lab05) */
+ssize_t write_all(int fd, const void *buf, size_t len);
+
+/* Apre 'path' come FIFO pronta all'uso lato lettore:
+ *   - mkfifo(path, mode) idempotente (tollera EEXIST);
+ *   - read-end in O_NONBLOCK (la open non blocca senza writer);
+ *   - una write-end "dummy" -> c'e' sempre >=1 writer: niente EOF spurio;
+ *   - fcntl() toglie O_NONBLOCK dal read-end (read successive bloccanti).
+ * Ritorna 0 e riempie *read_fd e *dummy_write_fd; su errore ritorna -1 lasciando
+ * errno valido e NON stampa nulla (il messaggio lo decide il chiamante). (Lab06) */
+int open_fifo_rw(const char *path, mode_t mode, int *read_fd, int *dummy_write_fd);
 
 #endif /* COMMON_H */

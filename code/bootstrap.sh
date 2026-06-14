@@ -138,7 +138,7 @@ NUM_SUPPLIERS=$((10#$NUM_SUPPLIERS))
 # ===========================================================================
 #TODO: controllare che il path di order client (c helper) sia congruente con quello in order.sh
 # -f = file regolare, -x = eseguibile (test su file, Lab07).
-for exe in ./warehouse ./supplier ./order_client ./restock_client; do
+for exe in ./warehouse ./supplier ./order_client ./restock_client; do #TODO: vedere se facciamo il restock client
     if [ ! -f "$exe" ] || [ ! -x "$exe" ]; then
         die "Errore: $exe non trovato o non eseguibile (compila con: make build)"
     fi
