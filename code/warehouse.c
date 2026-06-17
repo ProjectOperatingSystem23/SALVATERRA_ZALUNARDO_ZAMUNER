@@ -88,7 +88,7 @@
 #define MAX_INV_SIZE  1024   /* limite superiore sul numero di item nel CSV    */
 #define LINE_BUF       512   /* buffer per una riga di log / status            */
 #define RESTOCK_STOP_ID -1   /* supplier_id sentinella: inviato SOLO dal main
-                             /* sulla propria write-end dummy per far uscire il
+                              * sulla propria write-end dummy per far uscire il
                               * thread restock allo shutdown. Un RestockMsg
                               * esterno con id <= 0 e' comunque scartato come
                               * non valido, quindi non e' falsificabile in modo

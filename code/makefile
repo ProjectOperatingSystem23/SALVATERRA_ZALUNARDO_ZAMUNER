@@ -21,11 +21,11 @@
 
 CC = gcc
 CFLAGS = -Wall -Wextra -pedantic
-
 SRCS = common.c warehouse.c supplier.c order_client.c restock_client.c
-OBJS = $(SRCS:.c=.o)
-TARGETS = warehouse supplier order_client restock_client
-
+OBJS = common.o warehouse.o supplier.o order_client.o restock_client.o # intermedi: .c -> .o (gcc -c), riferimenti irrisolti
+TARGETS = warehouse supplier order_client restock_client # finali: link (gcc -o); common.o non e' un target (no main)
+SCRIPTS = bootstrap.sh order.sh manage.sh
+ARGS ?= 2 3 3 10 2 inventory.csv
 # Target di default. "build" (richiesto dalla spec 2.3) == "all" (nome dei lab).
 build: $(TARGETS)
 
@@ -45,6 +45,8 @@ restock_client: restock_client.o common.o
 # --- Compilazione: ogni .o dal suo .c  ($< = il file .c) ---
 %.o: %.c common.h
 	$(CC) $(CFLAGS) -c $< -o $@
+#% è un pattern matching: quando make cerca come produrre warehouse.o, controlla se esisteuna
+#regola con %.o come target. Se la trova, sostituisce % con warehouse ovunque
 
 # --- clean del prof (rm -f $(OBJS) $(TARGET)) + risorse IPC (spec 2.3) ---
 clean:

@@ -48,7 +48,7 @@ RESTOCK_FIFO="/tmp/restock_fifo"        # supplier/manage.sh  -> warehouse
 STATUS_FILE="/tmp/wh_status.tmp"        # dump SIGUSR1: warehouse -> manage.sh
 WAREHOUSE_PID_FILE="/tmp/warehouse.pid" # PID del warehouse
 SUPPLIERS_PID_FILE="/tmp/suppliers.pid" # PID dei supplier (uno per riga)
-
+LOG_FILE="orders.log"
 CONF_DIR="./supplier_configs"           # cartella con i file supplier_N.conf
 
 # ---- Stato del bootstrap: decide SE ripulire in caso di errore ----

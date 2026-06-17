@@ -133,4 +133,10 @@ ssize_t write_all(int fd, const void *buf, size_t len);
  * errno valido e NON stampa nulla (il messaggio lo decide il chiamante). (Lab06) */
 int open_fifo_rw(const char *path, mode_t mode, int *read_fd, int *dummy_write_fd);
 
+/* ── lettura di una riga da fd, byte per byte (Lab05) ──────────────────────
+ * Con i soli fd (niente stdio) non c'e' una "readline" pronta: leggere 1 byte
+ * alla volta e' la soluzione piu' semplice e corretta. Usata per CSV/.conf,
+ * caricati una sola volta all'avvio: l'inefficienza e' irrilevante.
+ * Ritorna i byte letti, 0 = EOF, -1 = errore. */
+ssize_t fd_read_line(int fd, char *buf, size_t size);
 #endif /* COMMON_H */
