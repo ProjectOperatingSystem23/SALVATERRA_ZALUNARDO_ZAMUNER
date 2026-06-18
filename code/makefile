@@ -18,6 +18,16 @@
 #     un unico file, qui common.h e' incluso da tutti);
 #   - "clean" rimuove anche le risorse IPC (FIFO, pid, ...), come chiede la spec 2.3.
 # =============================================================================
+#1. build dipende da warehouse → controlla warehouse
+#2. warehouse dipende da warehouse.o, common.o → controlla entrambi
+#3. warehouse.o non esiste o warehouse.c è più recente?
+#   → make cerca una regola che produca warehouse.o
+#   → trova la pattern rule: %.o: %.c common.h
+#   → applica il pattern: warehouse.o ← warehouse.c (e common.h)
+#4. Se warehouse.c (o common.h) è più recente di warehouse.o → ricompila
+#5. Stessa cosa per common.o
+#6. Se almeno uno tra warehouse.o/common.o è stato ricompilato (o warehouse non esiste)
+#   → rilinka warehouse
 
 CC = gcc
 CFLAGS = -Wall -Wextra -pedantic
@@ -28,6 +38,7 @@ SCRIPTS = bootstrap.sh order.sh manage.sh
 ARGS ?= 2 3 3 10 2 inventory.csv
 # Target di default. "build" (richiesto dalla spec 2.3) == "all" (nome dei lab).
 build: $(TARGETS)
+	@chmod +x $(SCRIPTS) 2>/dev/null || true
 
 # --- Link: ogni eseguibile = proprio .o + common.o  ($@ target, $^ dipendenze) ---
 warehouse: warehouse.o common.o
@@ -58,4 +69,4 @@ clean:
 
 # --- run: scenario d'esempio (spec 2.3) ---
 run: build
-	./bootstrap.sh 2 3 3 10 2 inventory.csv
+	./bootstrap.sh $(ARGS)

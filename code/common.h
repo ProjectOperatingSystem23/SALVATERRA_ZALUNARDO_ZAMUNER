@@ -43,6 +43,13 @@
  * file sia fisicamente condiviso. */
 
 /*TODO: VEDERE QUANDO VENGONO USATI*/
+/* Dove vengono usati:
+ *   - OrderResponse.status (warehouse -> client): OK/NOT_FOUND/OUT_OF_STOCK/
+ *     INVALID_QTY/PARTIAL;
+ *   - exit code dei processi C (supplier, order_client, restock_client):
+ *     OK/USAGE/IO/WAREHOUSE_DOWN;
+ *   - exit code degli script Bash (order.sh, manage.sh), che li ricopiano. */
+
 #define ERR_OK              0   /* successo                                     */
 #define ERR_ITEM_NOT_FOUND  1   /* item_id non presente in inventario           */
 #define ERR_OUT_OF_STOCK    2   /* item presente ma stock == 0                  */

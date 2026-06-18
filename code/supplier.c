@@ -215,7 +215,6 @@ int main(int argc, char *argv[])
                 close(fifo_fd);
                 return ERR_WAREHOUSE_DOWN;
             }
-
            plan[i].countdown = plan[i].interval;   /* riarma il timer */
         }
     }
