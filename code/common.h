@@ -3,7 +3,7 @@
 
 #include <sys/types.h>  /* ssize_t, mode_t (per i prototipi degli helper) */
 #include <stddef.h>     /* size_t */
-
+/*TODO: ma le librerie usate da TUTTI i programmi c non potremmmo metterle qui?????
 /* ============================================================================
  * common.h — Definizioni condivise tra warehouse, supplier, order_client,
  *            restock_client e gli script Bash.

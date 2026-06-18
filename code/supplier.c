@@ -170,7 +170,7 @@ int main(int argc, char *argv[])
      * Essendo bloccante, la open puo' essere interrotta da un segnale
      * (EINTR): in quel caso riproviamo, a meno che non sia un segnale di
      * terminazione (g_stop). Stesso trattamento di read/write_all (Lab05). */
-    int fifo_fd = -1;
+    int fifo_fd = -1; /*TODO: valutare se fare apertura non bloccante*/
     while (fifo_fd < 0 && !g_stop) {
         fifo_fd = open(RESTOCK_FIFO, O_WRONLY);
         if (fifo_fd < 0) {

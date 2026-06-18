@@ -197,7 +197,7 @@ cmd_restock() {
 #   STATUS in { SHIPPED, PARTIAL, REJECTED }
 # ===========================================================================
 cmd_report() {
-    { [ -f "$LOG_FILE" ] && [ -r "$LOG_FILE" ] }|| die "$ERR_IO" "Log '$LOG_FILE' non trovato (nessun ordine elaborato?)."
+    { [ -f "$LOG_FILE" ] && [ -r "$LOG_FILE" ] ;} || die "$ERR_IO" "Log '$LOG_FILE' non trovato (nessun ordine elaborato?)."
 
     local total shipped partial rejected units
     total=$(wc -l < "$LOG_FILE")                    # righe totali = ordini elaborati (wc -l, spec 2.2.8)
