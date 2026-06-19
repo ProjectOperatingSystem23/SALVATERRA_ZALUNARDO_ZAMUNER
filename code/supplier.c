@@ -158,7 +158,7 @@ int main(int argc, char *argv[])
      * warehouse morto (la write fallira' con EPIPE). */
     setup_handler(SIGTERM, handle_stop);
     setup_handler(SIGINT,  handle_stop);
-    setup_handler(SIGPIPE, handle_stop);
+    setup_handler(SIGPIPE, SIG_IGN);
 
     SupplyPlan plan[MAX_CONF_ITEMS];
     int n_items = load_config(argv[2], plan, MAX_CONF_ITEMS);
@@ -170,7 +170,7 @@ int main(int argc, char *argv[])
      * Essendo bloccante, la open puo' essere interrotta da un segnale
      * (EINTR): in quel caso riproviamo, a meno che non sia un segnale di
      * terminazione (g_stop). Stesso trattamento di read/write_all (Lab05). */
-    int fifo_fd = -1; /*TODO: valutare se fare apertura non bloccante*/
+    int fifo_fd = -1;
     while (fifo_fd < 0 && !g_stop) {
         fifo_fd = open(RESTOCK_FIFO, O_WRONLY);
         if (fifo_fd < 0) {
@@ -204,14 +204,7 @@ int main(int argc, char *argv[])
 
             RestockMsg msg = { supplier_id, plan[i].item_id, plan[i].quantity };
             if (write_all(fifo_fd, &msg, sizeof(msg)) < 0) {
-                /* EPIPE: warehouse morto (l'handler di SIGPIPE ha gia'
-                 * alzato g_stop) -> inutile continuare (spec 2.2.10) */
-                if (errno == EPIPE)
-                    fprintf(stderr, "[SUPPLIER %d] warehouse terminato, esco\n",
-                            supplier_id);
-                else
-                    fprintf(stderr, "[SUPPLIER %d] write su FIFO: %s\n",
-                            supplier_id, strerror(errno));
+                fprintf(stderr, "[SUPPLIER %d] write su FIFO: %s\n", supplier_id, strerror(errno));
                 close(fifo_fd);
                 return ERR_WAREHOUSE_DOWN;
             }

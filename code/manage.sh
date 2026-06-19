@@ -14,7 +14,7 @@
 #               STATUS_FILE; lo script lo legge e lo formatta. Il numero di
 #               processi vivi e' verificato con "kill -0" (un segnale "nullo"
 #               che non viene consegnato: serve solo a sapere se il PID esiste).
-#   - restock : delega l'IPC binario all'helper C ./restock_client (Bash non sa
+#   - restock : delega l'IPC binario all'helper C ./manual_restock (Bash non sa
 #               scrivere struct sulle FIFO), che scrive un RestockMsg sulla
 #               RESTOCK_FIFO con supplier_id=0 (= restock manuale, common.h).
 #   - report  : analizza orders.log con grep/cut/sort/uniq/awk/wc (Lab09).
@@ -44,15 +44,16 @@ WAREHOUSE_PID_FILE="/tmp/warehouse.pid"
 SUPPLIERS_PID_FILE="/tmp/suppliers.pid"
 LOG_FILE="orders.log"
 CONF_DIR="./supplier_configs"
-RESTOCK_HELPER="./restock_client" #TODO da rinominare qualcosa tipo restock manuale
+RESTOCK_HELPER="./manual_restock"
 
 # err: messaggio su stderr (fd 2), convenzione Unix (Lab05).
 err() { printf '%s\n' "$*" >&2; }
 
 # die <exit_code> <messaggio...>: stampa l'errore ed esce col codice ERR_*.
 # Stessa forma di order.sh: il PRIMO argomento e' il codice (spec 2.2.9).
+#local rende la variabile locale alla funzione
 die() {
-    local code=$1 #TODO: capire cosa è local, perché lo usa qua, è overkill?
+    local code=$1
     shift
     err "$*"
     exit "$code"
@@ -134,7 +135,7 @@ cmd_status() {
         sleep 0.1
     done
     [ -s "$STATUS_FILE" ] || die "$ERR_TIMEOUT" "Il warehouse non ha prodotto lo status in tempo."
-
+    #nons serve fare controllo -r perché warehouse l ha aperto con permessi 0644
     echo
     echo "=== Code (occupazione / capacita') ==="
     echo "  Pending   : $(grep '^PENDING_QUEUE='   "$STATUS_FILE" | cut -d= -f2)"
@@ -180,7 +181,7 @@ cmd_restock() {
     # Delega l'IPC binario all'helper C; il suo $? e' gia' un ERR_*.
     "$RESTOCK_HELPER" "$item_id" "$qty"
     local rc=$?
-    if [ "$rc" -eq "$ERR_OK" ]; then #TODO: considerare se fare queste stampate per user experience
+    if [ "$rc" -eq "$ERR_OK" ]; then
         echo "Restock accettato dal sistema (item $item_id, +$qty unita')."
         echo "Suggerimento: './manage.sh status' per vedere lo stock aggiornato."
     else
@@ -240,8 +241,7 @@ cmd_shutdown() {
     if [ -f "$SUPPLIERS_PID_FILE" ] && [ -r "$SUPPLIERS_PID_FILE" ]; then
         while IFS= read -r spid || [ -n "$spid" ]; do #read ritorna 0 se legge riga terminata da \n, se becca EOF entriamo nel ciclo se NON abbiamo letto vuoto (-n ==> stringa NON vuota)
             [ -z "$spid" ] && continue #all ultima ciclata questo potrebbe sssere ridondante ma serve per tutte quelle prima
-            #TODO: considerare se fare solo kill term senza pingare
-            kill -0 "$spid" 2>/dev/null && { kill -TERM "$spid" 2>/dev/null; acted=1; }
+            kill -TERM "$spid" 2>/dev/null && acted=1
         done < "$SUPPLIERS_PID_FILE"
     fi
 
@@ -252,7 +252,7 @@ cmd_shutdown() {
         if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
             echo "Invio SIGTERM al warehouse (PID $wpid); attendo gli ordini in volo..."
             kill -TERM "$wpid" 2>/dev/null && acted=1
-            for i in $(seq 1 100); do        # ~20 s (picker/packer dormono 1-3s) #TODO: 20s va bene?
+            for i in $(seq 1 100); do        # ~20 s (picker/packer dormono 1-3s)
                 kill -0 "$wpid" 2>/dev/null || break
                 sleep 0.2
             done

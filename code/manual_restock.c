@@ -88,7 +88,7 @@ int main(int argc, char *argv[])
     }
 
     /* SIGPIPE gestito con handler (Lab03), come supplier.c/order_client.c. */
-    setup_handler(SIGPIPE, on_pipe);
+    setup_handler(SIGPIPE, SIG_IGN);
 
     /* Apertura NON bloccante: se il warehouse non c'e' (nessun lettore della
      * FIFO) la open fallisce subito invece di bloccare per sempre. */
@@ -110,11 +110,6 @@ int main(int argc, char *argv[])
 
     RestockMsg msg = { MANUAL_RESTOCK_SUPPLIER_ID, item_id, quantity };
     if (write_all(fd, &msg, sizeof(msg)) < 0) {
-        if (errno == EPIPE || g_pipe) {     /* warehouse morto mentre scrivevamo */
-            fprintf(stderr, "[RESTOCK] warehouse terminato durante l'invio\n");
-            close(fd);
-            return ERR_WAREHOUSE_DOWN;
-        }
         fprintf(stderr, "[RESTOCK] write su '%s': %s\n", RESTOCK_FIFO, strerror(errno));
         close(fd);
         return ERR_IO;

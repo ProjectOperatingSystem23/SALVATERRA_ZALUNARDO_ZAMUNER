@@ -93,6 +93,8 @@
                               * esterno con id <= 0 e' comunque scartato come
                               * non valido, quindi non e' falsificabile in modo
                               * utile dall'esterno. */
+
+#define STATUS_FILE_TMP STATUS_FILE ".inprogress"
 /* ═══════════════════════════════════════════════════════════════════════════
  * Strutture dati INTERNE (non escono dal processo -> non stanno in common.h)
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -223,26 +225,19 @@ static ssize_t read_all(int fd, void *buf, size_t len)
 /* Estrae UN campo CSV dal cursore *pp. Gestisce sia campi "tra virgolette"
  * (es. "Wireless Mouse") sia campi semplici. Avanza *pp oltre il campo e la
  * virgola successiva. Scrive al massimo dst_size-1 byte e NUL-termina. */
-static void csv_field(char **pp, char *dst, int dst_size) /*TODO: mettere in common.c?*/
+/*da scrivere megio magari: questa funzione MODIFICA *pp, perché il chiamante VUOLE scorrere fino al campo successivo*/
+static void csv_field(char **pp, char *dst, int dst_size)
 {
     char *p = *pp;
     int   i = 0;
-
-    if (*p == '"') {                 /* campo quotato                           */
+    while (*p && *p != ',' && *p != '\n' && *p != '\r') /*la condizione *p da sola è il controllo per \0, \0 equivale a 0 per i char, qualsiasi altro carattere ('0' incluso)*/
+    {
+        if (i < dst_size-1)
+            dst[i++] = *p;
         p++;
-        while (*p && *p != '"') {
-            if (i < dst_size - 1) dst[i++] = *p;
-            p++;
-        }
-        if (*p == '"') p++;          /* salta la virgoletta di chiusura         */
-    } else {                         /* campo semplice                          */
-        while (*p && *p != ',' && *p != '\n' && *p != '\r') {
-            if (i < dst_size - 1) dst[i++] = *p;
-            p++;
-        }
     }
     dst[i] = '\0';
-    if (*p == ',') p++;              /* salta il separatore                     */
+    if (*p == ',') p++;              /* salta il separatore, non avanziamo se \n o \r, perche leggiamo riga per riga con fd_read_line*/
     *pp = p;
 }
 
@@ -844,8 +839,6 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
 
     /* ---- log: open in append (Lab05) ---- */
-    /*TODO: VEDERE CHE BOOTSTRAP ABBIA FATTO PULIZIA, CHE NON
-     *CI SIANO ISTANZE PRECEDENTI DI QUESTO FILE*/
     int log_fd = open(LOG_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (log_fd < 0) {
         fprintf(stderr, "[WAREHOUSE] open log '%s': %s\n", LOG_FILE, strerror(errno));
@@ -897,15 +890,9 @@ int main(int argc, char *argv[])
     setup_handler(SIGTERM, handle_shutdown);  /* handler: solo set di flag */
     setup_handler(SIGINT,  handle_shutdown);
     setup_handler(SIGUSR1, handle_dump);
-
     /* SIGPIPE ignorato: se un client chiude la sua resp_fifo, la write deve
      * fallire con EPIPE (gestito), NON terminare il warehouse. */
-    /*TODO: VEDERE CHE SIA LAB APPROVED, e magari se ritenuto necessario scrivere nel report*/
-    struct sigaction ign;
-    memset(&ign, 0, sizeof(ign));
-    ign.sa_handler = SIG_IGN; /*costante speciale ignora, il kernel scarta il segnale senza consegnarlo*/
-    sigemptyset(&ign.sa_mask);
-    sigaction(SIGPIPE, &ign, NULL);
+    setup_handler(SIGPIPE, SIG_IGN); /*TODO: controlla che l aggancio di SIG_IGN a SIGPIPE vada bene tramite funzione setup handler, settare sa:flags = 0 è innoccuo come extra?
 
     /* ---- struct-argomento (riferimenti, niente globali: Lab04) ---- */
     ReceiverArgs ra = { orders_fd, &orders_read_mutex, &inv, &pending,

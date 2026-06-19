@@ -93,10 +93,8 @@
 
 /* ====== Flag settati dagli handler (Lab03): solo sig_atomic_t volatile ====== */
 static volatile sig_atomic_t g_timed_out = 0;   /* alzato da SIGALRM            */
-static volatile sig_atomic_t g_pipe      = 0;   /* alzato da SIGPIPE (wh morto) */
 
 static void on_alarm(int sig) { (void)sig; g_timed_out = 1; }
-static void on_pipe (int sig) { (void)sig; g_pipe      = 1; }
 
 /* ====== I/O di basso livello (Lab05) ======================================= */
 
@@ -178,7 +176,7 @@ int main(int argc, char *argv[])
 
     /* Segnali (Lab03): timeout + sopravvivenza a un warehouse che muore. */
     setup_handler(SIGALRM, on_alarm);
-    setup_handler(SIGPIPE, on_pipe);
+    setup_handler(SIGPIPE, SIG_IGN); /*l'unica cosa che FORSE non servirebbe a sig ign, sono i sa.sa_flags = 0
 
     /* ---- 1. FIFO di risposta privata: /tmp/order_resp_<PID> ---- */
     char resp_path[MAX_RESP_FIFO];
@@ -228,13 +226,11 @@ int main(int argc, char *argv[])
     snprintf(req.resp_fifo, sizeof(req.resp_fifo), "%s", resp_path);
     req.item_id  = item_id;
     req.quantity = quantity;
-
+    /*SIGPIPE è sincrono alla write. Non arriva "in sottofondo" quando il peer muore: viene generato dalla write stessa
+     *nel momento in cui scrivi su una FIFO senza lettori. Quindi non c'è niente da intercettare in modo asincrono: la
+     *write ti restituisce già -1 con errno == EPIPE esattamente dove e quando serve. Un handler che alza un flag non
+     *aggiunge nessuna informazione che errno==EPIPE non ti dia già.*/
     if (write_all(ofd, &req, sizeof(req)) < 0) {
-        if (errno == EPIPE || g_pipe) {         /* warehouse morto mentre scrivevamo */
-            fprintf(stderr, "[ORDER] warehouse terminato durante l'invio\n");
-            close(ofd); close(rfd); close(wdummy); unlink(resp_path);
-            return ERR_WAREHOUSE_DOWN;
-        }
         fprintf(stderr, "[ORDER] write su ORDERS_FIFO: %s\n", strerror(errno));
         close(ofd); close(rfd); close(wdummy); unlink(resp_path);
         return ERR_IO;

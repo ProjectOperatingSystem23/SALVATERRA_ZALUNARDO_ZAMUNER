@@ -81,7 +81,7 @@ int open_fifo_rw(const char *path, mode_t mode, int *read_fd, int *dummy_write_f
         return -1;
     }
 
-    /*TODO: QUESTI COMANDI NON SONO NEI LAB, VA BENE USARLI MA ESSERE PRONTI ALLE FRANZILLATE*/
+    /*TODO: metti nel report spiegazione questi comandi*/
     int fl = fcntl(rfd, F_GETFL, 0);                   /* togli O_NONBLOCK dal read-end */
     if (fl < 0 || fcntl(rfd, F_SETFL, fl & ~O_NONBLOCK) < 0) {
         int e = errno; close(rfd); close(wfd); errno = e;

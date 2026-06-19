@@ -31,9 +31,9 @@
 
 CC = gcc
 CFLAGS = -Wall -Wextra -pedantic
-SRCS = common.c warehouse.c supplier.c order_client.c restock_client.c
-OBJS = common.o warehouse.o supplier.o order_client.o restock_client.o # intermedi: .c -> .o (gcc -c), riferimenti irrisolti
-TARGETS = warehouse supplier order_client restock_client # finali: link (gcc -o); common.o non e' un target (no main)
+SRCS = common.c warehouse.c supplier.c order_client.c manual_restock.c
+OBJS = common.o warehouse.o supplier.o order_client.o manual_restock.o # intermedi: .c -> .o (gcc -c), riferimenti irrisolti
+TARGETS = warehouse supplier order_client manual_restock # finali: link (gcc -o); common.o non e' un target (no main)
 SCRIPTS = bootstrap.sh order.sh manage.sh
 ARGS ?= 2 3 3 10 2 inventory.csv
 # Target di default. "build" (richiesto dalla spec 2.3) == "all" (nome dei lab).
@@ -50,7 +50,7 @@ supplier: supplier.o common.o
 order_client: order_client.o common.o
 	$(CC) $(CFLAGS) -o $@ $^
 
-restock_client: restock_client.o common.o
+manual_restock: manual_restock.o common.o
 	$(CC) $(CFLAGS) -o $@ $^
 
 # --- Compilazione: ogni .o dal suo .c  ($< = il file .c) ---

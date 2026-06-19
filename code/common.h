@@ -3,7 +3,7 @@
 
 #include <sys/types.h>  /* ssize_t, mode_t (per i prototipi degli helper) */
 #include <stddef.h>     /* size_t */
-/*TODO: ma le librerie usate da TUTTI i programmi c non potremmmo metterle qui?????
+
 /* ============================================================================
  * common.h — Definizioni condivise tra warehouse, supplier, order_client,
  *            restock_client e gli script Bash.
@@ -54,16 +54,12 @@
 #define ERR_ITEM_NOT_FOUND  1   /* item_id non presente in inventario           */
 #define ERR_OUT_OF_STOCK    2   /* item presente ma stock == 0                  */
 #define ERR_INVALID_QTY     3   /* quantita' <= 0                               */
-#define ERR_QUEUE_FULL      4   /* bounded buffer pieno (non usato attivamente:
-                                 * i producer BLOCCANO invece di fallire, come
-                                 * richiesto dalla spec 2.2.5; definito per
-                                 * completezza dell'insieme di codici)          */
-#define ERR_IO              5   /* errore di I/O (file, FIFO, ecc.)             */
-#define ERR_PARTIAL         6   /* consegna parziale: shipped < requested       */
-#define ERR_SHUTTING_DOWN   7   /* warehouse non accetta nuovi ordini           */
-#define ERR_WAREHOUSE_DOWN  8   /* order.sh/manage.sh non trova il warehouse    */
-#define ERR_TIMEOUT         9   /* attesa risposta IPC scaduta                  */
-#define ERR_USAGE          10   /* argomenti errati (script e helper C)         */
+/*noi abbiamo il consume bloccante sulle code, quindi non c'è bisogno di un codice di errore CODA PIENA*/
+#define ERR_IO              4   /* errore di I/O (file, FIFO, ecc.)             */
+#define ERR_PARTIAL         5   /* consegna parziale: shipped < requested       */
+#define ERR_WAREHOUSE_DOWN  6   /* order.sh/manage.sh non trova il warehouse    */
+#define ERR_TIMEOUT         7   /* attesa risposta IPC scaduta                  */
+#define ERR_USAGE          8   /* argomenti errati (script e helper C)         */
 
 /* ====== 3. STRING FIELD SIZE LIMITS ======================================== */
 #define MAX_CLIENT_ID   64
@@ -110,7 +106,7 @@ typedef struct {
     int qty_rejected;
 } OrderResponse;
 
-/* supplier / restock_client -> warehouse (su RESTOCK_FIFO) */
+/* supplier / c helper -> warehouse (su RESTOCK_FIFO) */
 typedef struct {
     int supplier_id;
     int item_id;

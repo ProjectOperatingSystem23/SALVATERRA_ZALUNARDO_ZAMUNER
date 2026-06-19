@@ -20,7 +20,7 @@
 # Riferimenti corso:
 #   - Lab06 (IPC): FIFO / named pipe, mkfifo.
 #   - Lab07 / Lab08 (scripting): test su file, trap, gestione errori.
-#   - Lab03 (segnali): i nomi dei segnali usati dalle trap (INT/TERM/HUP).
+#   - Lab03 (segnali): i nomi dei segnali usati dalle trap (INT/TERM).
 #
 # NB sui path: sono gli STESSI definiti in common.h. In Bash non si puo' fare
 # #include di un header C, quindi le costanti sono ricopiate qui identiche:
@@ -65,8 +65,7 @@ cleanup_runtime() {
         kill -TERM "$pid" 2>/dev/null   # ignora "processo gia' morto"
     done
 
-    rm -f "$ORDERS_FIFO" "$RESTOCK_FIFO" "$STATUS_FILE" \
-          "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE"
+    rm -f "$ORDERS_FIFO" "$RESTOCK_FIFO" "$STATUS_FILE" "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE"
 
     rm -rf "$CONF_DIR"
 }
@@ -78,7 +77,7 @@ on_exit() {
 
     # Disarmiamo subito le trap: cosi' l'exit finale non rientra in on_exit
     # (evita ricorsione infinita).
-    trap - EXIT INT TERM HUP
+    trap - EXIT INT TERM
 
     # Cleanup SOLO se l'avvio NON e' arrivato in fondo (BOOTSTRAP_SUCCESS=0) E
     # avevamo gia' creato risorse runtime (RUNTIME_CREATED=1). Se tutto e'
@@ -91,15 +90,8 @@ on_exit() {
 }
 
 # ---- Le quattro trap (Lab03 per i segnali, Lab08 per l'uso negli script) ----
-#   EXIT -> pseudo-segnale: scatta a ogni uscita. Punto UNICO del cleanup.
-#   INT  -> SIGINT  (Ctrl-C da tastiera).               exit 128+2  = 130.
-#   TERM -> SIGTERM (kill "gentile", default di kill).  exit 128+15 = 143.
-#   HUP  -> SIGHUP  ("hangup"): chiusura del terminale. exit 128+1  = 129.
-# I codici 128+N sono la convenzione shell per "terminato dal segnale N".
 trap on_exit EXIT
-trap 'err "Interrotto (SIGINT)."; exit 130' INT
-trap 'err "Terminato (SIGTERM)."; exit 143' TERM
-trap 'err "Hangup (SIGHUP)."; exit 129' HUP
+trap 'err "Interrotto da segnale."; exit 1' INT TERM 
 
 # ===========================================================================
 # VALIDAZIONE ARGOMENTI
@@ -136,9 +128,9 @@ NUM_SUPPLIERS=$((10#$NUM_SUPPLIERS))
 # ===========================================================================
 # VALIDAZIONE ESEGUIBILI (spec 2.3: "verify whether the executables are built")
 # ===========================================================================
-#TODO: controllare che il path di order client (c helper) sia congruente con quello in order.sh
+
 # -f = file regolare, -x = eseguibile (test su file, Lab07).
-for exe in ./warehouse ./supplier ./order_client ./restock_client; do #TODO: vedere se facciamo il restock client
+for exe in ./warehouse ./supplier ./order_client ./manual_restock; do
     if [ ! -f "$exe" ] || [ ! -x "$exe" ]; then
         die "Errore: $exe non trovato o non eseguibile (compila con: make build)"
     fi
@@ -352,7 +344,7 @@ printf '%s\n' "$WAREHOUSE_PID" > "$WAREHOUSE_PID_FILE" \
 
 # Diamo al warehouse un istante per inizializzarsi (FIFO, CSV); poi verifichiamo
 # che sia ancora vivo. Se e' morto, inutile avviare i supplier.
-sleep 1 #TODO: chiedere al franzil se va bene o meglio sleep 2 o altro
+sleep 1
 if ! kill -0 "$WAREHOUSE_PID" 2>/dev/null; then
     die "Errore: il warehouse e' terminato durante l'avvio"
 fi
@@ -381,7 +373,7 @@ done
 # Avvio riuscito: i processi devono restare vivi -> NON ripulire all'uscita.
 # Alziamo il flag e disarmiamo le trap (l'EXIT trap non fara' piu' cleanup).
 BOOTSTRAP_SUCCESS=1
-trap - EXIT INT TERM HUP
+trap - EXIT INT TERM
 
 # ===========================================================================
 # RECAP
