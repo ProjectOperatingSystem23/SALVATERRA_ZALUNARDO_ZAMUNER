@@ -35,7 +35,7 @@ SRCS = common.c warehouse.c supplier.c order_client.c manual_restock.c
 OBJS = common.o warehouse.o supplier.o order_client.o manual_restock.o # intermedi: .c -> .o (gcc -c), riferimenti irrisolti
 TARGETS = warehouse supplier order_client manual_restock # finali: link (gcc -o); common.o non e' un target (no main)
 SCRIPTS = bootstrap.sh order.sh manage.sh
-ARGS ?= 2 3 3 10 2 inventory.csv
+ARGS ?= 2 3 3 10 2 inventory.csv #TODO: make run non prende benegli input e va col default, perché???'
 # Target di default. "build" (richiesto dalla spec 2.3) == "all" (nome dei lab).
 build: $(TARGETS)
 	@chmod +x $(SCRIPTS) 2>/dev/null || true

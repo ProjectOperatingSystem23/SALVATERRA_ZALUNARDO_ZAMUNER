@@ -173,7 +173,7 @@ int main(int argc, char *argv[])
 
     /* Segnali (Lab03): timeout + sopravvivenza a un warehouse che muore. */
     setup_handler(SIGALRM, on_alarm);
-    setup_handler(SIGPIPE, SIG_IGN); /*l'unica cosa che FORSE non servirebbe a sig ign, sono i sa.sa_flags = 0
+    setup_handler(SIGPIPE, SIG_IGN); /*l'unica cosa che FORSE non servirebbe a sig ign, sono i sa.sa_flags = 0*/
 
     /* ---- 1. FIFO di risposta privata: /tmp/order_resp_<PID> ---- */
     char resp_path[MAX_RESP_FIFO];

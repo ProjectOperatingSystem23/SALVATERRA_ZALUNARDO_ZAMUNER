@@ -900,7 +900,7 @@ int main(int argc, char *argv[])
     setup_handler(SIGUSR1, handle_dump);
     /* SIGPIPE ignorato: se un client chiude la sua resp_fifo, la write deve
      * fallire con EPIPE (gestito), NON terminare il warehouse. */
-    setup_handler(SIGPIPE, SIG_IGN); /*TODO: controlla che l aggancio di SIG_IGN a SIGPIPE vada bene tramite funzione setup handler, settare sa:flags = 0 è innoccuo come extra?
+    setup_handler(SIGPIPE, SIG_IGN); /*TODO: controlla che l aggancio di SIG_IGN a SIGPIPE vada bene tramite funzione setup handler, settare sa:flags = 0 è innoccuo come extra?*/
 
     /* ---- struct-argomento (riferimenti, niente globali: Lab04) ---- */
     ReceiverArgs ra = { orders_fd, &orders_read_mutex, &inv, &pending,
