@@ -6,7 +6,7 @@
 
 /* ============================================================================
  * common.h — Definizioni condivise tra warehouse, supplier, order_client,
- *            restock_client e gli script Bash.
+ *            manual_restock e gli script Bash.
  *
  * Questo file e' l'INTERFACCIA BINARIA del sistema. Tutti i processi che si
  * scambiano messaggi via FIFO devono includere ESATTAMENTE questa stessa
@@ -46,7 +46,7 @@
 /* Dove vengono usati:
  *   - OrderResponse.status (warehouse -> client): OK/NOT_FOUND/OUT_OF_STOCK/
  *     INVALID_QTY/PARTIAL;
- *   - exit code dei processi C (supplier, order_client, restock_client):
+ *   - exit code dei processi C (supplier, order_client, manual_restock):
  *     OK/USAGE/IO/WAREHOUSE_DOWN;
  *   - exit code degli script Bash (order.sh, manage.sh), che li ricopiano. */
 
@@ -70,7 +70,7 @@
 /* ====== 4. SPECIAL VALUES ================================================== */
 /*
  * MANUAL_RESTOCK_SUPPLIER_ID
- * Usato da manage.sh (tramite l'helper restock_client) per inviare un restock
+ * Usato da manage.sh (tramite l'helper manual_restock) per inviare un restock
  * manuale via RESTOCK_FIFO, riutilizzando la stessa struct RestockMsg dei
  * supplier reali. Il warehouse distingue:
  *   supplier_id == 0 -> restock manuale,

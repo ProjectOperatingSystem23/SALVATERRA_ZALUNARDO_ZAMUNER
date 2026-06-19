@@ -1,8 +1,8 @@
 /* ============================================================================
- * restock_client.c  --  Helper C dello script manage.sh (Project 2026-3)
+ * manual_restock.c  --  Helper C dello script manage.sh (Project 2026-3)
  *
  * Uso (invocato da manage.sh restock, NON direttamente dall'utente finale):
- *   ./restock_client <item_id> <quantity>
+ *   ./manual_restock <item_id> <quantity>
  *
  * RUOLO (spec 2.2.8 "Restock an item by sending a message ... via IPC"):
  *   E' il lato "manager" del canale di restock. manage.sh e' Bash e NON sa
@@ -22,7 +22,7 @@
  *
  * GERARCHIA DI VALIDAZIONE (come order_client / order.sh):
  *   - manage.sh     : input lato utente (item_id/qty interi >= 1);
- *   - restock_client: ricontrolla item_id/qty >= 1 (difesa in profondita' per
+ *   - manual_restock: ricontrolla item_id/qty >= 1 (difesa in profondita' per
  *                     chi lo chiamasse direttamente) e la sicurezza del
  *                     wire-format;
  *   - warehouse     : autorita' semantica (item esistente? -> altrimenti
