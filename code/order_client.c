@@ -44,20 +44,17 @@
  *   a quella che il warehouse usa in open_fifo_rw. La teniamo per coerenza interna
  *   col progetto (da segnalare nel report).
  *
- * SEGNALI (Lab03, tutti via sigaction in setup_handler, come supplier.c):
- *   - SIGALRM: timeout di sicurezza. Se il warehouse muore DOPO aver accettato la
- *     richiesta, la read sulla resp_fifo non vedrebbe mai EOF (per via della dummy
- *     write-end): l'alarm interrompe la syscall (EINTR) e usciamo con ERR_TIMEOUT.
- *     Handler SENZA SA_RESTART, altrimenti la read verrebbe riavviata e il timeout
- *     sarebbe inefficace.
- *   - SIGPIPE: gestito con un HANDLER (come supplier.c, non SIG_IGN): il default
- *     ucciderebbe il processo. Se il warehouse muore mentre scriviamo la richiesta,
- *     la write ritorna -1/EPIPE (gestito -> ERR_WAREHOUSE_DOWN) invece di terminarci.
- *     Per order_client il comportamento osservabile e' identico a SIG_IGN (qui non
- *     c'e' un loop da interrompere): la scelta dell'handler e' per COERENZA con
- *     supplier.c. Nel warehouse invece SIGPIPE e' IGNORATO, perche' li' un client
- *     morto deve far fallire solo quella write, non fermare il server: stessa
- *     primitiva, scelta opposta motivata dal contesto.
+* SEGNALI (Lab03):
+ *   - SIGALRM: timeout di sicurezza, via sigaction in setup_handler. Se il
+ *     warehouse muore DOPO aver accettato la richiesta, la read sulla resp_fifo
+ *     non vedrebbe mai EOF (per via della dummy write-end): l'alarm interrompe la
+ *     syscall (EINTR) e usciamo con ERR_TIMEOUT. Handler SENZA SA_RESTART,
+ *     altrimenti la read verrebbe riavviata e il timeout sarebbe inefficace.
+ *   - SIGPIPE: IGNORATO con SIG_IGN, come nel warehouse. Il default ucciderebbe
+ *     il processo; ignorandolo, se il warehouse muore mentre scriviamo la
+ *     richiesta la write ritorna -1 con errno=EPIPE (gestito -> ERR_WAREHOUSE_DOWN)
+ *     invece di terminarci. Qui NON serve un handler con flag: non c'e' un loop da
+ *     interrompere, basta controllare il valore di ritorno della write.
  *
  * I/O di basso livello (open/read/write/close), niente <stdio.h> per l'IPC:
  *   stesso livello di warehouse/supplier (Lab05). printf/fprintf solo per

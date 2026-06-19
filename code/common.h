@@ -42,7 +42,7 @@
  * La spec (2.2.9) richiede che C e Bash usino gli stessi valori, non che il
  * file sia fisicamente condiviso. */
 
-/*TODO: VEDERE QUANDO VENGONO USATI*/
+/*TODO: VEDERE QUANDO VENGONO USATI, METTERE NEL REPORT*/
 /* Dove vengono usati:
  *   - OrderResponse.status (warehouse -> client): OK/NOT_FOUND/OUT_OF_STOCK/
  *     INVALID_QTY/PARTIAL;

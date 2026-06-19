@@ -87,8 +87,8 @@
  * ═══════════════════════════════════════════════════════════════════════════ */
 #define MAX_INV_SIZE  1024   /* limite superiore sul numero di item nel CSV    */
 #define LINE_BUF       512   /* buffer per una riga di log / status            */
-#define RESTOCK_STOP_ID -1   /* supplier_id sentinella: inviato SOLO dal main
-                              * sulla propria write-end dummy per far uscire il
+#define RESTOCK_STOP_ID -1   /* supplier_id sentinella: inviato SOLO dal main  */
+                              /* sulla propria write-end dummy per far uscire il
                               * thread restock allo shutdown. Un RestockMsg
                               * esterno con id <= 0 e' comunque scartato come
                               * non valido, quindi non e' falsificabile in modo
@@ -530,7 +530,7 @@ static void handle_dump    (int sig) { (void)sig; g_dump_status = 1; }
 static void do_status_dump(Inventory *inv, BoundedQueue *pending,
                            BoundedQueue *packaging, int nr, int np, int npk)
 {
-    int fd = open(STATUS_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd = open(STATUS_FILE_TMP, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) {
         fprintf(stderr, "[WAREHOUSE] open status '%s': %s\n",
                 STATUS_FILE, strerror(errno));
@@ -571,6 +571,14 @@ static void do_status_dump(Inventory *inv, BoundedQueue *pending,
         free(snap);
     }
     close(fd);
+
+    /* rename ATOMICO: da qui STATUS_FILE e' il dump completo (sostituisce in un
+     * colpo solo l'eventuale versione precedente). */
+    if (rename(STATUS_FILE_TMP, STATUS_FILE) != 0) {
+        fprintf(stderr, "[WAREHOUSE] rename status '%s' -> '%s': %s\n",
+                STATUS_FILE_TMP, STATUS_FILE, strerror(errno));
+        unlink(STATUS_FILE_TMP);   /* non lasciare il temp orfano */
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

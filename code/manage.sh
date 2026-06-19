@@ -114,24 +114,16 @@ cmd_status() {
         return "$ERR_WAREHOUSE_DOWN"
     fi
 
-    # Chiediamo il dump: rimuoviamo il vecchio file, mandiamo SIGUSR1 e
-    # aspettiamo che il warehouse riscriva STATUS_FILE. Per evitare di leggere
-    # un dump scritto a meta', aspettiamo che il numero di righe ITEM| coincida
-    # con INVENTORY_COUNT (il dump e' completo).
+        # Chiediamo il dump: rimuoviamo il vecchio file e mandiamo SIGUSR1. Il
+        # warehouse scrive su un file temporaneo e poi fa rename() ATOMICO su
+        # STATUS_FILE: quando il file COMPARE e' gia' completo, quindi basta
+        # aspettarne la comparsa (niente piu' check di completezza del dump).
     rm -f "$STATUS_FILE"
     kill -USR1 "$wpid" 2>/dev/null || die "$ERR_WAREHOUSE_DOWN" "Invio di SIGUSR1 fallito."
 
-    local i declared seen
-    #confrontiamo declared vs seen perché potremmo star leggendo (da questo processo) mentre warehouse lo sta scrivendo
-    for i in $(seq 1 30); do          # ~3 s di attesa massima per aspettare la creazione di status file da parte di warehouse
-        if [ -s "$STATUS_FILE" ]; then #-s è vero se il file esiste e ha dimensione maggiore di 0
-            declared=$(grep '^INVENTORY_COUNT=' "$STATUS_FILE" 2>/dev/null | cut -d= -f2)  #^inizio riga
-            #cut -d= -f2: Prende quella riga, la "taglia" usando il simbolo uguale (=) come separatore (-d=) e restituisce solo il secondo pezzo (-f2), ovvero il numero effettivo.
-            if [ -n "$declared" ]; then #-n vero se la stringa ha lunghezza non nulla
-                seen=$(grep -c '^ITEM|' "$STATUS_FILE" 2>/dev/null)
-                [ "$seen" -eq "$declared" ] && break
-            fi
-        fi
+    local i
+    for i in $(seq 1 30); do          # ~3 s di attesa massima
+        [ -s "$STATUS_FILE" ] && break #-s il file esiste e ha dimensione >0
         sleep 0.1
     done
     [ -s "$STATUS_FILE" ] || die "$ERR_TIMEOUT" "Il warehouse non ha prodotto lo status in tempo."

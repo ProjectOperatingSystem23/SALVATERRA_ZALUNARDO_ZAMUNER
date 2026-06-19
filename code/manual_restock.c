@@ -60,9 +60,6 @@
 #include <string.h>     /* strerror                   */
 #include "common.h"     /* RestockMsg, RESTOCK_FIFO, ERR_*, helper condivisi */
 
-/* Flag settato dall'handler di SIGPIPE (Lab03): solo sig_atomic_t volatile. */
-static volatile sig_atomic_t g_pipe = 0;
-static void on_pipe(int sig) { (void)sig; g_pipe = 1; }
 
 /* Validazione "intero >= 1": rifiuta vuoto, segni, cifre + spazzatura.
  * atoi() non distingue "0" da "abc" (entrambi 0), quindi qui ci limitiamo a
