@@ -138,7 +138,7 @@ cmd_status() {
     printf "  %-8s %-30s %-14s %8s\n" "------" "-----------" "--------" "-----"
     # IFS='|' spezza i campi del dump: ITEM|id|desc|cat|stock
     grep '^ITEM|' "$STATUS_FILE" | while IFS='|' read -r _ id desc cat stock; do
-        printf "  %-8s %-30s %-14s %8s\n" "$id" "$desc" "$cat" "$stock"
+      printf "  %-8s %-30.30s %-14s %8s\n" "$id" "$desc" "$cat" "$stock"
     done
 
     return "$ERR_OK"

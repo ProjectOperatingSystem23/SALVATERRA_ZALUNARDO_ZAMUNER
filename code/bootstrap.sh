@@ -335,12 +335,13 @@ fi
 
 # Il warehouse va in background (&). $! e' il PID dell'ultimo comando in bg.
 # Lo salviamo in STARTED_PIDS (per il rollback) e nel suo PID file.
+#uno script di bash è uno script non interattivo, quindi stderr non viene stampato anche a schermo,
+# di conseguenza la notifica del job control "[<job number>] <PID>" non si vede a schermo
 ./warehouse "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAP" "$CSV_FILE" &
 WAREHOUSE_PID=$!
 STARTED_PIDS="$STARTED_PIDS $WAREHOUSE_PID"
 
-printf '%s\n' "$WAREHOUSE_PID" > "$WAREHOUSE_PID_FILE" \
-    || die "Errore: impossibile scrivere $WAREHOUSE_PID_FILE"
+printf '%s\n' "$WAREHOUSE_PID" > "$WAREHOUSE_PID_FILE" || die "Errore: impossibile scrivere $WAREHOUSE_PID_FILE"
 
 # Diamo al warehouse un istante per inizializzarsi (FIFO, CSV); poi verifichiamo
 # che sia ancora vivo. Se e' morto, inutile avviare i supplier.

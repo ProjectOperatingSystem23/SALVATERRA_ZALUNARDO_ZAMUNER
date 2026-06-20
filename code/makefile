@@ -32,10 +32,10 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -pedantic
 SRCS = common.c warehouse.c supplier.c order_client.c manual_restock.c
-OBJS = common.o warehouse.o supplier.o order_client.o manual_restock.o # intermedi: .c -> .o (gcc -c), riferimenti irrisolti
+OBJS=$(SRCS:.c=.o) # intermedi: .c -> .o (gcc -c), riferimenti irrisolti
 TARGETS = warehouse supplier order_client manual_restock # finali: link (gcc -o); common.o non e' un target (no main)
 SCRIPTS = bootstrap.sh order.sh manage.sh
-ARGS ?= 2 3 3 10 2 inventory.csv #TODO: make run non prende benegli input e va col default, perché???'
+ARGS ?= 2 3 3 10 2 inventory.csv
 # Target di default. "build" (richiesto dalla spec 2.3) == "all" (nome dei lab).
 build: $(TARGETS)
 	@chmod +x $(SCRIPTS) 2>/dev/null || true
@@ -58,7 +58,26 @@ manual_restock: manual_restock.o common.o
 	$(CC) $(CFLAGS) -c $< -o $@
 #% è un pattern matching: quando make cerca come produrre warehouse.o, controlla se esisteuna
 #regola con %.o come target. Se la trova, sostituisce % con warehouse ovunque
-
+# 3) Aggiungi questo nuovo target (puoi richiamarlo con "make usage" o "make help"):
+usage help:
+	@echo "Fulfillment Center (Project 2026-3) - comandi make"
+	@echo ""
+	@echo "  make build                compila gli eseguibili"
+	@echo "  make run [ARGS=\"...\"]     avvia il sistema tramite bootstrap.sh"
+	@echo "  make clean                rimuove eseguibili, oggetti e risorse IPC"
+	@echo "  make usage                mostra questo messaggio"
+	@echo ""
+	@echo "Interfaccia bootstrap (argomenti passati via ARGS=\"...\"):"
+	@echo "  <num_receivers> <num_pickers> <num_packers> <queue_capacity> <num_suppliers> <inventory.csv>"
+	@echo ""
+	@echo "Esempio:"
+	@echo "  make run ARGS=\"15 20 30 15 10 inventory.csv\""
+	@echo ""
+	@echo "Default (make run senza ARGS):  $(ARGS)"
+	@echo ""
+	@echo "Altri comandi del progetto:"
+	@echo "  ./order.sh  <client_id> <item_id> <quantity>"
+	@echo "  ./manage.sh status | restock <item_id> <qty> | report | shutdown"
 # --- clean del prof (rm -f $(OBJS) $(TARGET)) + risorse IPC (spec 2.3) ---
 clean:
 	rm -f $(OBJS) $(TARGETS)
