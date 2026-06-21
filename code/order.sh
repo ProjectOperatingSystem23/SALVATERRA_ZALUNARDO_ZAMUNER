@@ -26,9 +26,9 @@
 # =============================================================================
 
 # ---- codici d'errore (IDENTICI a common.h, spec 2.2.9) ----
-ERR_IO=5
-ERR_WAREHOUSE_DOWN=8
-ERR_USAGE=10
+ERR_IO=4
+ERR_WAREHOUSE_DOWN=6
+ERR_USAGE=8
 
 # ---- path (coerenti con common.h e bootstrap.sh) ----
 ORDERS_FIFO="/tmp/orders_fifo"
@@ -54,7 +54,7 @@ die() {
 
 # ---- uso ----
 if [ "$#" -ne 3 ]; then
-    die "$ERR_USAGE" "Uso: $0 <client_id> <item_id> <quantity>"
+    die "$ERR_USAGE" "Use: $0 <client_id> <item_id> <quantity>"
 fi
 
 CLIENT_ID=$1
@@ -68,12 +68,12 @@ QUANTITY=$3
 # Ammettiamo lettere, cifre, '_', '-', '.' e 1..63 caratteri (MAX_CLIENT_ID-1).
 case "$CLIENT_ID" in
     "")
-        die "$ERR_USAGE" "Errore: client_id vuoto." ;;
+        die "$ERR_USAGE" "Error: empty client_id." ;;
     *[!A-Za-z0-9_.-]*)
-        die "$ERR_USAGE" "Errore: client_id contiene caratteri non ammessi (usa A-Z a-z 0-9 _ . -)." ;;
+        die "$ERR_USAGE" "Error: client_id contains invalid characters (use A-Z, a-z, 0-9, _, ., -)." ;;
 esac
 if [ "${#CLIENT_ID}" -ge 64 ]; then
-    die "$ERR_USAGE" "Errore: client_id troppo lungo (max 63 caratteri)."
+    die "$ERR_USAGE" "Error: client_id is too long (max 63 characters)."
 fi
 
 # ---- validazione item_id: intero STRETTAMENTE positivo (>= 1) ----
@@ -81,21 +81,21 @@ fi
 # *[1-9]*    richiede almeno una cifra 1-9, cosi' "0" / "00" vengono respinti.
 # (Stesso pattern usato in bootstrap.sh per i parametri numerici.)
 case "$ITEM_ID" in
-    ''|*[!0-9]*) die "$ERR_USAGE" "Errore: item_id ('$ITEM_ID') non e' un intero positivo." ;;
+    ''|*[!0-9]*) die "$ERR_USAGE" "Error: item_id ('$ITEM_ID') is not a positive integer." ;;
     *[1-9]*)     : ;;                                                            # > 0 -> ok
-    *)           die "$ERR_USAGE" "Errore: item_id deve essere >= 1." ;;
+    *)           die "$ERR_USAGE" "Error: item_id must be >= 1." ;;
 esac
 
 # ---- validazione quantity: intero STRETTAMENTE positivo (>= 1) ----
 case "$QUANTITY" in
-    ''|*[!0-9]*) die "$ERR_USAGE" "Errore: quantity ('$QUANTITY') non e' un intero positivo." ;;
+    ''|*[!0-9]*) die "$ERR_USAGE" "Error: quantity ('$QUANTITY') is not a positive integer." ;;
     *[1-9]*)     : ;;                                                             # > 0 -> ok
-    *)           die "$ERR_USAGE" "Errore: quantity deve essere >= 1." ;;
+    *)           die "$ERR_USAGE" "Error: quantity must be >= 1." ;;
 esac
 
 # Normalizzazione base 10: evita che "007" sia letto come ottale in (( )).
-ITEM_ID=$((10#$ITEM_ID))
-QUANTITY=$((10#$QUANTITY))
+#ITEM_ID=$((10#$ITEM_ID))
+#QUANTITY=$((10#$QUANTITY))
 
 # ---- il warehouse e' vivo? (spec: ERR_WAREHOUSE_DOWN) ----
 # kill -0 non invia segnali: verifica solo se il processo esiste (Lab03).
@@ -104,25 +104,25 @@ QUANTITY=$((10#$QUANTITY))
 #   b) PID file presente ma vuoto        -> avvio interrotto a meta';
 #   c) PID che non risponde a kill -0    -> processo terminato.
 if [ ! -f "$WAREHOUSE_PID_FILE" ] || [ ! -r "$WAREHOUSE_PID_FILE" ]; then
-    die "$ERR_WAREHOUSE_DOWN" "Errore: PID file '$WAREHOUSE_PID_FILE' mancante o non leggibile. Avvia ./bootstrap.sh"
+    die "$ERR_WAREHOUSE_DOWN" "Error: PID file '$WAREHOUSE_PID_FILE' missing or unreadable. Run ./bootstrap.sh"
 fi
 
-WH_PID=$(cat "$WAREHOUSE_PID_FILE" 2>/dev/null)
-if [ -z "$WH_PID" ]; then
-    die "$ERR_WAREHOUSE_DOWN" "Errore: PID file '$WAREHOUSE_PID_FILE' vuoto (avvio del warehouse interrotto?)."
+WAREHOUSE_PID=$(cat "$WAREHOUSE_PID_FILE" 2>/dev/null)
+if [ -z "$WAREHOUSE_PID" ]; then
+    die "$ERR_WAREHOUSE_DOWN" "Error: PID file '$WAREHOUSE_PID_FILE' is empty (warehouse startup interrupted?)."
 fi
-if ! kill -0 "$WH_PID" 2>/dev/null; then
-    die "$ERR_WAREHOUSE_DOWN" "Errore: warehouse non in esecuzione (PID $WH_PID non attivo)."
+if ! kill -0 "$WAREHOUSE_PID" 2>/dev/null; then
+    die "$ERR_WAREHOUSE_DOWN" "Error: warehouse not running (PID $WAREHOUSE_PID not active)."
 fi
 
 # -p = la FIFO esiste ed e' una named pipe (Lab06/07).
 if [ ! -p "$ORDERS_FIFO" ]; then
-    die "$ERR_WAREHOUSE_DOWN" "Errore: FIFO ordini '$ORDERS_FIFO' inesistente (warehouse non pronto?)."
+    die "$ERR_WAREHOUSE_DOWN" "Error: FIFO for orders '$ORDERS_FIFO' does not exist (warehouse not ready?)."
 fi
 
 # ---- helper compilato? (-x = eseguibile, Lab07) ----
 if [ ! -x "$HELPER" ]; then
-    die "$ERR_IO" "Errore: '$HELPER' non trovato o non eseguibile (compila con: make build)."
+    die "$ERR_IO" "Error: '$HELPER' not found or not executable (compile with: make build)."
 fi
 
 # ---- delega l'IPC binario all'helper C; il suo $? e' gia' un ERR_* ----

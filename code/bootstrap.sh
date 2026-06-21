@@ -59,7 +59,7 @@ BOOTSTRAP_SUCCESS=0    # 1 = avvio completato: NON ripulire all'uscita
 # cleanup_runtime: rollback. Uccide i processi gia' lanciati e rimuove le
 # risorse create finora. Serve solo se l'avvio fallisce a meta'.
 cleanup_runtime() {
-    err "Pulizia dopo avvio fallito..."
+    err "Cleanup after failed launch..."
 
     for pid in $STARTED_PIDS; do
         kill -TERM "$pid" 2>/dev/null   # ignora "processo gia' morto"
@@ -91,39 +91,39 @@ on_exit() {
 
 # ---- Le quattro trap (Lab03 per i segnali, Lab08 per l'uso negli script) ----
 trap on_exit EXIT
-trap 'err "Interrotto da segnale."; exit 1' INT TERM 
+trap 'err "Interrupted by a signal."; exit 1' INT TERM
 
 # ===========================================================================
 # VALIDAZIONE ARGOMENTI
 # ===========================================================================
 
 if [ $# -ne 6 ]; then
-    die "Uso: $0 <num_receivers> <num_pickers> <num_packers> <queue_capacity> <num_suppliers> <inventory.csv>"
+    die "Usage: $0 <num_receivers> <num_pickers> <num_packers> <queue_capacity> <num_suppliers> <inventory.csv>"
 fi
 
 NUM_RECEIVERS=$1
 NUM_PICKERS=$2
 NUM_PACKERS=$3
-QUEUE_CAP=$4
+QUEUE_CAPACITY=$4
 NUM_SUPPLIERS=$5
 CSV_FILE=$6
 
 # I 5 parametri numerici devono essere interi STRETTAMENTE positivi (>= 1).
-for arg in "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAP" "$NUM_SUPPLIERS"; do
+for arg in "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAPACITY" "$NUM_SUPPLIERS"; do
     case "$arg" in
-        ''|*[!0-9]*) die "Errore: '$arg' non e' un intero positivo" ;;  # vuoto/non-cifre
+        ''|*[!0-9]*) die "Error: '$arg' is not a positive integer" ;;  # vuoto/non-cifre
         *[1-9]*)     : ;;                                                # ha una cifra 1-9 -> OK
-        *)           die "Errore: '$arg' deve essere >= 1" ;;            # tutte cifre ma valore 0
+        *)           die "Error: '$arg' must be >= 1" ;;            # tutte cifre ma valore 0
     esac
 done
 
 # Normalizzazione in base 10: "0005" o "010" sarebbero altrimenti letti come
 # ottali nelle espressioni aritmetiche (( )). Il prefisso 10# forza la base 10.
-NUM_RECEIVERS=$((10#$NUM_RECEIVERS))
-NUM_PICKERS=$((10#$NUM_PICKERS))
-NUM_PACKERS=$((10#$NUM_PACKERS))
-QUEUE_CAP=$((10#$QUEUE_CAP))
-NUM_SUPPLIERS=$((10#$NUM_SUPPLIERS))
+#NUM_RECEIVERS=$((10#$NUM_RECEIVERS))
+#NUM_PICKERS=$((10#$NUM_PICKERS))
+#NUM_PACKERS=$((10#$NUM_PACKERS))
+#QUEUE_CAPACITY=$((10#$QUEUE_CAPACITY))
+#NUM_SUPPLIERS=$((10#$NUM_SUPPLIERS)) TODO: cancellali dal branch ufficiale
 
 # ===========================================================================
 # VALIDAZIONE ESEGUIBILI (spec 2.3: "verify whether the executables are built")
@@ -132,7 +132,7 @@ NUM_SUPPLIERS=$((10#$NUM_SUPPLIERS))
 # -f = file regolare, -x = eseguibile (test su file, Lab07).
 for exe in ./warehouse ./supplier ./order_client ./manual_restock; do
     if [ ! -f "$exe" ] || [ ! -x "$exe" ]; then
-        die "Errore: $exe non trovato o non eseguibile (compila con: make build)"
+        die "Error: $exe not found/executable (make build)"
     fi
 done
 
@@ -142,20 +142,20 @@ done
 
 # -r = leggibile.
 if [ ! -f "$CSV_FILE" ] || [ ! -r "$CSV_FILE" ]; then
-    die "Errore: '$CSV_FILE' non trovato o non leggibile."
+    die "Error: '$CSV_FILE' not found/readable."
 fi
 
 # Servono almeno 2 righe: header + almeno una riga di dati.
 NUM_LINES=$(grep -c '' "$CSV_FILE")
 if [ "$NUM_LINES" -lt 2 ]; then
-    die "Errore: il CSV deve avere l'header e almeno una riga dati."
+    die "Error: the CSV must have the header and at least one line of data."
 fi
 
 # Nessun ItemID duplicato (colonna 1, escludendo l'header con tail -n +2).
 # uniq -d stampa solo i valori che compaiono piu' di una volta.
 DUPLICATES=$(tail -n +2 "$CSV_FILE" | cut -d',' -f1 | tr -d '\r' | sort | uniq -d)
 if [ -n "$DUPLICATES" ]; then
-    err "Errore: ItemID duplicati trovati:"
+    err "Error: duplicate ItemID found:"
     printf '%s\n' "$DUPLICATES" >&2
     exit 1
 fi
@@ -173,13 +173,13 @@ while IFS= read -r line || [ -n "$line" ]; do
     # Riga 1 = header: deve essere ESATTAMENTE quello atteso.
     if [ "$LINE_NUM" -eq 1 ]; then
         if [ "$line" != "ItemID,Description,Category,Stock" ]; then
-            die "Errore: header non valido. Atteso 'ItemID,Description,Category,Stock', trovato '$line'"
+            die "Error: invalid header. Expected 'ItemID,Description,Category,Stock', found '$line'"
         fi
         continue
     fi
 
     if [ -z "$line" ]; then
-        die "Errore: riga $LINE_NUM e' vuota."
+        die "Error: line $LINE_NUM is empty."
     fi
 
     # Esattamente 4 campi separati da virgola.
@@ -187,14 +187,14 @@ while IFS= read -r line || [ -n "$line" ]; do
     #  verrebbe contata come piu' campi. L'inventario fornito non ne ha.)
     NUM_FIELDS=$(awk -F',' '{print NF}' <<< "$line")
     if [ "$NUM_FIELDS" -ne 4 ]; then
-        die "Errore: riga $LINE_NUM ha $NUM_FIELDS campi (attesi 4)."
+        die "Error: line $LINE_NUM has $NUM_FIELDS fields (expected 4)."
     fi
 
     # Nessun campo vuoto.
     for col in 1 2 3 4; do
         FIELD=$(printf '%s\n' "$line" | cut -d',' -f"$col")
         if [ -z "$FIELD" ]; then
-            die "Errore: riga $LINE_NUM, colonna $col e' vuota."
+            die "Error: line $LINE_NUM, column $col is empty."
         fi
     done
 
@@ -205,19 +205,19 @@ while IFS= read -r line || [ -n "$line" ]; do
 
     # ItemID e Stock devono essere interi non negativi.
     case "$ITEM_ID" in
-        ''|*[!0-9]*) die "Errore: riga $LINE_NUM, ItemID non numerico." ;;
+        ''|*[!0-9]*) die "Error: line $LINE_NUM, ItemID is not a number." ;;
     esac
     case "$STOCK" in
-        ''|*[!0-9]*) die "Errore: riga $LINE_NUM, Stock non numerico." ;;
+        ''|*[!0-9]*) die "Error: line $LINE_NUM, Stock is not a number." ;;
     esac
 
     # Lunghezze coerenti con le struct wire-format (common.h):
     # MAX_DESC=128, MAX_CATEGORY=64 (lasciando spazio al '\0' finale).
     if [ "${#DESCRIPTION}" -ge 128 ]; then
-        die "Errore: riga $LINE_NUM, Description troppo lunga (max 127 caratteri)."
+        die "Error: line $LINE_NUM, Description is too long (max 127 charachters)."
     fi
     if [ "${#CATEGORY}" -ge 64 ]; then
-        die "Errore: riga $LINE_NUM, Category troppo lunga (max 63 caratteri)."
+        die "Error: line $LINE_NUM, Category is too long (max 63 charachters)."
     fi
 done < "$CSV_FILE"
 
@@ -227,11 +227,11 @@ done < "$CSV_FILE"
 
 # kill -0 non invia segnali: verifica solo se il processo esiste (Lab03).
 if [ -f "$WAREHOUSE_PID_FILE" ]; then
-    OLD_PID=$(cat "$WAREHOUSE_PID_FILE") || die "Errore: impossibile leggere $WAREHOUSE_PID_FILE"
+    OLD_PID=$(cat "$WAREHOUSE_PID_FILE") || die "Error: failed to read $WAREHOUSE_PID_FILE"
 
     if kill -0 "$OLD_PID" 2>/dev/null; then
-        err "Errore: un warehouse e' gia' in esecuzione (PID $OLD_PID)."
-        err "Usa ./manage.sh shutdown prima di avviare una nuova istanza."
+        err "Error: a warehouse is already executing (PID $OLD_PID)."
+        err "Use ./manage.sh shutdown before launching a new instance."
         exit 1
     fi
 fi
@@ -242,20 +242,20 @@ RUNTIME_CREATED=1
 
 rm -f "$ORDERS_FIFO" "$RESTOCK_FIFO" "$STATUS_FILE" \
       "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE" \
-    || die "Errore: impossibile rimuovere i vecchi file runtime"
+    || die "Error: failed to remove old runtime files"
 
 # Log della run precedente: lo rimuoviamo cosi' il warehouse (che apre in
 # O_APPEND) riparte da un file vuoto e ./manage.sh report analizza SOLO la
 # run corrente, senza mischiare statistiche di run diverse.
-rm -f "$LOG_FILE" || die "Errore: impossibile rimuovere il vecchio $LOG_FILE"
+rm -f "$LOG_FILE" || die "Error: failed to remove the old $LOG_FILE"
 
 # FIFO di risposta orfane: se una run precedente e' stata uccisa a meta',
 # in /tmp possono restare le FIFO private dei client (order_resp_<PID>).
 # Nessun processo le usa piu': via anche quelle.
 rm -f /tmp/order_resp_*
 
-rm -rf "$CONF_DIR"   || die "Errore: impossibile rimuovere la vecchia $CONF_DIR"
-mkdir -p "$CONF_DIR" || die "Errore: impossibile creare la cartella $CONF_DIR"
+rm -rf "$CONF_DIR"   || die "Error: failed to remove the previous $CONF_DIR"
+mkdir -p "$CONF_DIR" || die "Error: failed to create the directory $CONF_DIR"
 
 # ===========================================================================
 # CREAZIONE IPC (FIFO) -- Lab06
@@ -264,8 +264,8 @@ mkdir -p "$CONF_DIR" || die "Errore: impossibile creare la cartella $CONF_DIR"
 # Named pipe = canale IPC client<->warehouse e supplier<->warehouse. Le crea il
 # bootstrap; il warehouse le apre (e le ricrea idempotente, se servisse). Le
 # abbiamo appena rimosse sopra, quindi qui vanno create da zero.
-mkfifo "$ORDERS_FIFO"  || die "Errore: impossibile creare $ORDERS_FIFO"
-mkfifo "$RESTOCK_FIFO" || die "Errore: impossibile creare $RESTOCK_FIFO"
+mkfifo "$ORDERS_FIFO"  || die "Error: failed to create $ORDERS_FIFO"
+mkfifo "$RESTOCK_FIFO" || die "Error: failed to create $RESTOCK_FIFO"
 
 # ===========================================================================
 # GENERAZIONE DEI FILE supplier_N.conf
@@ -285,8 +285,7 @@ NUM_ITEMS=$(( NUM_LINES - 1 ))   # righe dati = righe totali - header
 # Header di ogni supplier_N.conf.
 for ((i = 1; i <= NUM_SUPPLIERS; i++)); do
     CONF_FILE="$CONF_DIR/supplier_${i}.conf"
-    printf 'item_id,quantity_per_shipment,interval_seconds\n' > "$CONF_FILE" \
-        || die "Errore: impossibile scrivere $CONF_FILE"
+    printf 'item_id,quantity_per_shipment,interval_seconds\n' > "$CONF_FILE" || die "Error: failed to write on $CONF_FILE"
 done
 
 # Distribuzione ROUND-ROBIN: ogni item va a un supplier, ciclando
@@ -303,7 +302,7 @@ while IFS= read -r line || [ -n "$line" ]; do
 
     printf '%s,%s,%s\n' "$ITEM_ID" "$RESTOCK_QTY" "$INTERVAL" \
         >> "$CONF_DIR/supplier_${SUPPLIER_IDX}.conf" \
-        || die "Errore: impossibile aggiornare supplier_${SUPPLIER_IDX}.conf"
+        || die "Error: failed to update supplier_${SUPPLIER_IDX}.conf"
 
     SUPPLIER_IDX=$(( SUPPLIER_IDX + 1 ))
     [ "$SUPPLIER_IDX" -gt "$NUM_SUPPLIERS" ] && SUPPLIER_IDX=1   # wrap-around
@@ -317,15 +316,12 @@ if [ "$NUM_SUPPLIERS" -gt "$NUM_ITEMS" ]; then
         RANDOM_LINE=$(( (RANDOM % NUM_ITEMS) + 1 ))   # quale riga dati pescare
 
         # tail -n +2 salta l'header; sed -n "Np" estrae la riga N-esima.
-        RANDOM_ITEM=$(tail -n +2 "$CSV_FILE" | sed -n "${RANDOM_LINE}p" \
-                        | tr -d '\r' | cut -d',' -f1)
-        [ -z "$RANDOM_ITEM" ] && die "Errore: selezione item casuale fallita per supplier $idx"
+        RANDOM_ITEM=$(tail -n +2 "$CSV_FILE" | sed -n "${RANDOM_LINE}p"  | tr -d '\r' | cut -d',' -f1)
+        [ -z "$RANDOM_ITEM" ] && die "Error: selection of a random item failed for supplier $idx"
 
         INTERVAL=$(( (RANDOM % INTERVAL_RANGE) + INTERVAL_MIN ))
 
-        printf '%s,%s,%s\n' "$RANDOM_ITEM" "$RESTOCK_QTY" "$INTERVAL" \
-            >> "$CONF_DIR/supplier_${idx}.conf" \
-            || die "Errore: impossibile aggiornare supplier_${idx}.conf"
+        printf '%s,%s,%s\n' "$RANDOM_ITEM" "$RESTOCK_QTY" "$INTERVAL"  >> "$CONF_DIR/supplier_${idx}.conf" || die "Error: failed to update supplier_${idx}.conf"
     done
 fi
 
@@ -337,37 +333,36 @@ fi
 # Lo salviamo in STARTED_PIDS (per il rollback) e nel suo PID file.
 #uno script di bash è uno script non interattivo, quindi stderr non viene stampato anche a schermo,
 # di conseguenza la notifica del job control "[<job number>] <PID>" non si vede a schermo
-./warehouse "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAP" "$CSV_FILE" &
+./warehouse "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAPACITY" "$CSV_FILE" &
 WAREHOUSE_PID=$!
 STARTED_PIDS="$STARTED_PIDS $WAREHOUSE_PID"
 
-printf '%s\n' "$WAREHOUSE_PID" > "$WAREHOUSE_PID_FILE" || die "Errore: impossibile scrivere $WAREHOUSE_PID_FILE"
+printf '%s\n' "$WAREHOUSE_PID" > "$WAREHOUSE_PID_FILE" || die "Error: failed to write on $WAREHOUSE_PID_FILE"
 
 # Diamo al warehouse un istante per inizializzarsi (FIFO, CSV); poi verifichiamo
 # che sia ancora vivo. Se e' morto, inutile avviare i supplier.
 sleep 1
 if ! kill -0 "$WAREHOUSE_PID" 2>/dev/null; then
-    die "Errore: il warehouse e' terminato durante l'avvio"
+    die "Error: warehouse terminated during startup"
 fi
 
 # Svuotiamo (o creiamo) il file dei PID dei supplier: uno per riga.
 # true non fa nulla, il > richiede un comando prima sennò da errore
-true > "$SUPPLIERS_PID_FILE" || die "Errore: impossibile creare $SUPPLIERS_PID_FILE"
+true > "$SUPPLIERS_PID_FILE" || die "Error: failed to create $SUPPLIERS_PID_FILE"
 
 for ((i = 1; i <= NUM_SUPPLIERS; i++)); do
     ./supplier "$i" "$CONF_DIR/supplier_${i}.conf" &
-    SUPP_PID=$!
-    STARTED_PIDS="$STARTED_PIDS $SUPP_PID"
+    SUPPLIER_PID=$!
+    STARTED_PIDS="$STARTED_PIDS $SUPPLIER_PID"
 
-    printf '%s\n' "$SUPP_PID" >> "$SUPPLIERS_PID_FILE" \
-        || die "Errore: impossibile scrivere il PID del supplier in $SUPPLIERS_PID_FILE"
+    printf '%s\n' "$SUPPLIER_PID" >> "$SUPPLIERS_PID_FILE" || die "Error: failed to write the supplier's PID to $SUPPLIERS_PID_FILE"
 done
 
 # Breve attesa e controllo finale: tutti i processi devono essere vivi.
 sleep 0.2
 for pid in $STARTED_PIDS; do
     if ! kill -0 "$pid" 2>/dev/null; then
-        die "Errore: il processo $pid e' terminato durante l'avvio"
+        die "Error: the process $pid was terminated during startup"
     fi
 done
 
@@ -381,18 +376,18 @@ trap - EXIT INT TERM
 # ===========================================================================
 
 echo ""
-echo "=== Fulfillment Center avviato ==="
+echo "=== Fulfillment Center launched ==="
 echo "  Receivers : $NUM_RECEIVERS"
 echo "  Pickers   : $NUM_PICKERS"
 echo "  Packers   : $NUM_PACKERS"
-echo "  Queue cap : $QUEUE_CAP"
+echo "  Queue cap : $QUEUE_CAPACITY"
 echo "  Suppliers : $NUM_SUPPLIERS"
 echo "  Inventory : $CSV_FILE ($NUM_ITEMS items)"
 echo ""
 echo "  Warehouse PID : $(cat "$WAREHOUSE_PID_FILE")"
 echo "  Supplier PIDs : $(tr '\n' ' ' < "$SUPPLIERS_PID_FILE")"
 echo ""
-echo "Comandi utili:"
-echo "  ./order.sh <client_id> <item_id> <quantity>      # invia un ordine"
+echo "Interface:"
+echo "  ./order.sh <client_id> <item_id> <quantity>"
 echo "  ./manage.sh status | restock <id> <qty> | report | shutdown"
 echo ""

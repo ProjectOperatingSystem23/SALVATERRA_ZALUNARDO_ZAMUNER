@@ -56,7 +56,7 @@
 #define ERR_INVALID_QTY     3   /* quantita' <= 0                               */
 /*noi abbiamo il consume bloccante sulle code, quindi non c'è bisogno di un codice di errore CODA PIENA*/
 #define ERR_IO              4   /* errore di I/O (file, FIFO, ecc.)             */
-#define ERR_PARTIAL         5   /* consegna parziale: shipped < requested       */
+#define ERR_PARTIAL_FILL         5   /* consegna parziale: shipped < requested       */
 #define ERR_WAREHOUSE_DOWN  6   /* order.sh/manage.sh non trova il warehouse    */
 #define ERR_TIMEOUT         7   /* attesa risposta IPC scaduta                  */
 #define ERR_USAGE          8   /* argomenti errati (script e helper C)         */
@@ -121,7 +121,7 @@ typedef struct {
 
 /* Installa un handler per 'sig' con sigaction, SENZA SA_RESTART: le syscall
  * lente vengono interrotte dai segnali (serve per alarm/sleep). (Lab03) */
-void setup_handler(int sig, void (*fn)(int));
+void setup_handler(int sig, void (*handler)(int));
 
 /* write "completa": ripete la write finche' tutti i 'len' byte sono usciti,
  * riprovando su EINTR. Ritorna len, oppure -1 con errno settato. (Lab05) */
@@ -134,12 +134,12 @@ ssize_t write_all(int fd, const void *buf, size_t len);
  *   - fcntl() toglie O_NONBLOCK dal read-end (read successive bloccanti).
  * Ritorna 0 e riempie *read_fd e *dummy_write_fd; su errore ritorna -1 lasciando
  * errno valido e NON stampa nulla (il messaggio lo decide il chiamante). (Lab06) */
-int open_fifo_rw(const char *path, mode_t mode, int *read_fd, int *dummy_write_fd);
+int open_fifo_r_dw(const char *path, mode_t mode, int *read_fd, int *dummy_write_fd);
 
 /* ── lettura di una riga da fd, byte per byte (Lab05) ──────────────────────
  * Con i soli fd (niente stdio) non c'e' una "readline" pronta: leggere 1 byte
  * alla volta e' la soluzione piu' semplice e corretta. Usata per CSV/.conf,
  * caricati una sola volta all'avvio: l'inefficienza e' irrilevante.
  * Ritorna i byte letti, 0 = EOF, -1 = errore. */
-ssize_t fd_read_line(int fd, char *buf, size_t size);
+ssize_t read_line_from_fd(int fd, char *buf, size_t size);
 #endif /* COMMON_H */

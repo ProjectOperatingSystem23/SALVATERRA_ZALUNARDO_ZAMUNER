@@ -31,10 +31,10 @@
 
 # ---- codici d'errore (IDENTICI a common.h, spec 2.2.9) ----
 ERR_OK=0
-ERR_IO=5
-ERR_WAREHOUSE_DOWN=8
-ERR_TIMEOUT=9
-ERR_USAGE=10
+ERR_IO=4
+ERR_WAREHOUSE_DOWN=6
+ERR_TIMEOUT=7
+ERR_USAGE=8
 
 # ---- path (coerenti con common.h e bootstrap.sh) ----
 ORDERS_FIFO="/tmp/orders_fifo"
@@ -60,11 +60,11 @@ die() {
 }
 
 usage() {
-    err "Uso: $0 <operation> [args...]"
-    err "  status                 mostra processi, code e inventario"
-    err "  restock <item_id> <qty> invia un restock manuale"
-    err "  report                 statistiche da $LOG_FILE"
-    err "  shutdown               arresta tutto e ripulisce le risorse IPC"
+    err "Usage: $0 <operation> [args...]"
+    err "  status                 shows processes, queues and inventory"
+    err "  restock <item_id> <qty> sends a manual restock"
+    err "  report                 displays statistics from $LOG_FILE"
+    err "  shutdown               shuts everything down and cleans allocated IPC resourestock_eces"
     exit "$ERR_USAGE"
 }
 
@@ -89,11 +89,11 @@ cmd_status() {
     local wpid
     wpid=$(warehouse_pid_if_alive) || wpid="" #$(....) cattura il stdout
 
-    echo "=== Stato processi ==="
+    echo "=== Processes status ==="
     if [ -n "$wpid" ]; then #check stringa ! da 0
-        echo "  Warehouse : ATTIVO (PID $wpid)"
+        echo "  Warehouse : ACTIVE (PID $wpid)"
     else
-        echo "  Warehouse : NON ATTIVO"
+        echo "  Warehouse : INACTIVE"
     fi
 
     # Conteggio supplier vivi (kill -0 su ogni PID salvato da bootstrap.sh).
@@ -105,12 +105,12 @@ cmd_status() {
             kill -0 "$spid" 2>/dev/null && running=$(( running + 1 ))
         done < "$SUPPLIERS_PID_FILE"
     fi
-    echo "  Suppliers : $running attivi / $total totali"
+    echo "  Suppliers : $running active / $total total"
 
     # Senza warehouse non possiamo avere code/inventario (li dumpa lui).
     if [ -z "$wpid" ]; then
         echo
-        echo "(Code e inventario non disponibili: il warehouse non e' attivo.)"
+        echo "(Queues and inventory unavailable: warehouse is down.)"
         return "$ERR_WAREHOUSE_DOWN"
     fi
 
@@ -119,21 +119,21 @@ cmd_status() {
         # STATUS_FILE: quando il file COMPARE e' gia' completo, quindi basta
         # aspettarne la comparsa (niente piu' check di completezza del dump).
     rm -f "$STATUS_FILE"
-    kill -USR1 "$wpid" 2>/dev/null || die "$ERR_WAREHOUSE_DOWN" "Invio di SIGUSR1 fallito."
+    kill -USR1 "$wpid" 2>/dev/null || die "$ERR_WAREHOUSE_DOWN" "Failed to send SIGUSR1."
 
     local i
     for i in $(seq 1 30); do          # ~3 s di attesa massima
         [ -s "$STATUS_FILE" ] && break #-s il file esiste e ha dimensione >0
         sleep 0.1
     done
-    [ -s "$STATUS_FILE" ] || die "$ERR_TIMEOUT" "Il warehouse non ha prodotto lo status in tempo."
-    #nons serve fare controllo -r perché warehouse l ha aperto con permessi 0644
+    [ -s "$STATUS_FILE" ] || die "$ERR_TIMEOUT" "Warehouse didn't produce the status dump in time."
+    #nons serve fare controllo -r perestock_eché warehouse l ha aperto con permessi 0644
     echo
-    echo "=== Code (occupazione / capacita') ==="
+    echo "=== Queues (items / capacity') ==="
     echo "  Pending   : $(grep '^PENDING_QUEUE='   "$STATUS_FILE" | cut -d= -f2)"
     echo "  Packaging : $(grep '^PACKAGING_QUEUE=' "$STATUS_FILE" | cut -d= -f2)"
     echo
-    echo "=== Inventario ==="
+    echo "=== Inventory ==="
     printf "  %-8s %-30s %-14s %8s\n" "ItemID" "Description" "Category" "Stock"
     printf "  %-8s %-30s %-14s %8s\n" "------" "-----------" "--------" "-----"
     # IFS='|' spezza i campi del dump: ITEM|id|desc|cat|stock
@@ -149,37 +149,37 @@ cmd_status() {
 # ===========================================================================
 
 cmd_restock() {
-    [ "$#" -eq 2 ] || die "$ERR_USAGE" "Uso: $0 restock <item_id> <quantity>"
+    [ "$#" -eq 2 ] || die "$ERR_USAGE" "Usage: $0 restock <item_id> <quantity>"
     local item_id=$1 qty=$2
 
     # Stesso filtro caratteri di order.sh: interi STRETTAMENTE positivi (>=1).
     case "$item_id" in
-        ''|*[!0-9]*) die "$ERR_USAGE" "Errore: item_id ('$item_id') non e' un intero positivo." ;;
+        ''|*[!0-9]*) die "$ERR_USAGE" "Error: item_id ('$item_id') must be a positive integer." ;;
         *[1-9]*)     : ;;
-        *)           die "$ERR_USAGE" "Errore: item_id deve essere >= 1." ;;
+        *)           die "$ERR_USAGE" "Error: item_id must be >= 1." ;;
     esac
     case "$qty" in
-        ''|*[!0-9]*) die "$ERR_USAGE" "Errore: quantity ('$qty') non e' un intero positivo." ;;
+        ''|*[!0-9]*) die "$ERR_USAGE" "Error: quantity ('$qty') must be a positive integer." ;;
         *[1-9]*)     : ;;
-        *)           die "$ERR_USAGE" "Errore: quantity deve essere >= 1." ;;
+        *)           die "$ERR_USAGE" "Error: quantity must be >= 1." ;;
     esac
     item_id=$(( 10#$item_id ))   # base 10: "007" non e' ottale
     qty=$(( 10#$qty ))
 
     # Il warehouse deve essere vivo e la sua FIFO presente (spec 2.2.8).
-    warehouse_pid_if_alive >/dev/null || die "$ERR_WAREHOUSE_DOWN" "Errore: warehouse non in esecuzione. Avvia ./bootstrap.sh"
-    [ -p "$RESTOCK_FIFO" ] || die "$ERR_WAREHOUSE_DOWN" "Errore: FIFO restock '$RESTOCK_FIFO' inesistente (warehouse non pronto?)."
-    { [ -f "$RESTOCK_HELPER" ] && [ -x "$RESTOCK_HELPER" ]; } || die "$ERR_IO" "Errore: '$RESTOCK_HELPER' non trovato o non eseguibile (compila con: make build)."
+    warehouse_pid_if_alive >/dev/null || die "$ERR_WAREHOUSE_DOWN" "Error: warehouse not in execution. Launch ./bootstrap.sh"
+    [ -p "$RESTOCK_FIFO" ] || die "$ERR_WAREHOUSE_DOWN" "Error: FIFO restock '$RESTOCK_FIFO' nonexistent."
+    { [ -f "$RESTOCK_HELPER" ] && [ -x "$RESTOCK_HELPER" ]; } || die "$ERR_IO" "Error: '$RESTOCK_HELPER' not found/executable (compile with: make build)."
     # Delega l'IPC binario all'helper C; il suo $? e' gia' un ERR_*.
     "$RESTOCK_HELPER" "$item_id" "$qty"
-    local rc=$?
-    if [ "$rc" -eq "$ERR_OK" ]; then
-        echo "Restock accettato dal sistema (item $item_id, +$qty unita')."
-        echo "Suggerimento: './manage.sh status' per vedere lo stock aggiornato."
+    local restock_ec=$?
+    if [ "$restock_ec" -eq "$ERR_OK" ]; then
+        echo "Restock accepted by the system (item $item_id, +$qty units')."
+        echo "Tip: './manage.sh status' to view the update inventory."
     else
-        err "Restock fallito (codice $rc)."
+        err "Restock failed (code $restock_ec)."
     fi
-    return "$rc" #alternativa return $?, eviti di creare var locale rc
+    return "$restock_ec" #alternativa return $?, eviti di creare var locale restock_ec
 }
 
 # ===========================================================================
@@ -190,7 +190,7 @@ cmd_restock() {
 #   STATUS in { SHIPPED, PARTIAL, REJECTED }
 # ===========================================================================
 cmd_report() {
-    { [ -f "$LOG_FILE" ] && [ -r "$LOG_FILE" ] ;} || die "$ERR_IO" "Log '$LOG_FILE' non trovato (nessun ordine elaborato?)."
+    { [ -f "$LOG_FILE" ] && [ -r "$LOG_FILE" ] ;} || die "$ERR_IO" "Log '$LOG_FILE' not found."
 
     local total shipped partial rejected units
     total=$(wc -l < "$LOG_FILE")                    # righe totali = ordini elaborati (wc -l, spec 2.2.8)
@@ -200,15 +200,15 @@ cmd_report() {
     units=$(awk -F'|' '{ s += $6 } END { print s + 0 }' "$LOG_FILE") #processa l'input riga per riga, spezzando ogni riga in campi.
                         #s è una var di awk, viene auto-init a 0 automaticamente
     #spezza ogni riga sui |, somma la colonna 6 (qty_shipped) su tutte le righe, stampa il totale (0 se non c'è nulla)
-    echo "=== Report ordini ($LOG_FILE) ==="
-    echo "  Ordini elaborati (totale) : $total"
-    echo "  Spediti completi (SHIPPED): $shipped"
-    echo "  Spediti parziali (PARTIAL): $partial"
-    echo "  Rifiutati       (REJECTED): $rejected"
-    echo "  Unita' totali spedite     : $units"
+    echo "=== Order REPORT ($LOG_FILE) ==="
+    echo "  Total orders processed : $total"
+    echo "  Orders fulfilled: $shipped"
+    echo "  Orders partially fulfilled (PARTIAL): $partial"
+    echo "  Orders rejected       (REJECTED): $rejected"
+    echo "  Total Units Shipped     : $units"
 
     echo
-    echo "  Top 5 item piu' ordinati (per numero di ordini con spedizione):"
+    echo "  Top 5 Most Ordered Items (by number of orders):"
     # Escludo i rifiutati, prendo l'item_id (campo 4), conto e ordino (Lab09).
     grep -vE '\|REJECTED$' "$LOG_FILE" | cut -d'|' -f4 | sort | uniq -c | sort -rn | head -5 | awk '{ printf "    item %-8s -> %s ordini\n", $2, $1 }'
     #1) il grep outputta tutte le righe che NON hanno il pattern, *termina con:* |REJECTED
@@ -242,13 +242,13 @@ cmd_shutdown() {
     if [ -f "$WAREHOUSE_PID_FILE" ] && [ -r "$WAREHOUSE_PID_FILE" ]; then
         wpid=$(cat "$WAREHOUSE_PID_FILE" 2>/dev/null)
         if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
-            echo "Invio SIGTERM al warehouse (PID $wpid); attendo gli ordini in volo..."
+            echo "Send SIGTERM to the warehouse (PID $wpid); waiting for orders in flight..."
             kill -TERM "$wpid" 2>/dev/null && acted=1
             for i in $(seq 1 100); do        # ~20 s (picker/packer dormono 1-3s)
                 kill -0 "$wpid" 2>/dev/null || break
                 sleep 0.2
             done
-            kill -0 "$wpid" 2>/dev/null && { err "Warehouse non uscito in tempo: forzo SIGKILL."; kill -KILL "$wpid" 2>/dev/null; }
+            kill -0 "$wpid" 2>/dev/null && { err "Warehouse timed out: forestock_ece SIGKILL."; kill -KILL "$wpid" 2>/dev/null; }
         fi
     fi
 
@@ -259,7 +259,7 @@ cmd_shutdown() {
     rm -f /tmp/order_resp_*          # FIFO private dei client eventualmente orfane
     rm -rf "$CONF_DIR"               # supplier_N.conf generati da bootstrap
 
-    [ "$acted" -eq 1 ] && echo "Shutdown completato; risorse IPC ripulite." || echo "Nessun processo attivo; ripulite eventuali risorse residue."
+    [ "$acted" -eq 1 ] && echo "Shutdown complete; IPC resourestock_eces cleaned up." || echo "No active processes; clean up any remaining resourestock_eces."
     return "$ERR_OK"
 }
 

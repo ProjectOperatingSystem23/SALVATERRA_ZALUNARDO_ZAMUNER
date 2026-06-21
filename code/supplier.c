@@ -27,7 +27,7 @@
  *   - Apertura FIFO con retry su EINTR.
  *   - SIGPIPE gestito con un HANDLER (sigaction, Lab03), non ignorato: il
  *     default di SIGPIPE terminerebbe il processo; con l'handler installato
- *     il processo sopravvive, l'handler alza g_stop e la write che ha
+ *     il processo sopravvive, l'handler alza shutdown_flag e la write che ha
  *     generato il segnale fallisce con EPIPE, gestito al punto di chiamata.
  *   - I segnali NON sono bloccati (processo single-thread): gli handler
  *     settano solo flag volatile sig_atomic_t (Lab03).
@@ -38,8 +38,6 @@
  *              Parsing .conf con sscanf (C standard, non nei lab: scelta
  *              dichiarata, vedi commento in load_config).
  * ============================================================================ */
-
-#define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -60,19 +58,19 @@ typedef struct {
     int quantity;
     int interval;     /* secondi tra una consegna e la successiva */
     int countdown;    /* secondi mancanti alla prossima consegna  */
-} SupplyPlan;
+} RestockSchedule;
 
 /* Flag di terminazione: settato dagli handler (Lab03). */
-static volatile sig_atomic_t g_stop = 0;
+static volatile sig_atomic_t shutdown_flag = 0;
 
 /* SIGTERM/SIGINT/SIGPIPE: richiesta di terminazione pulita. */
-static void handle_stop(int sig) { (void)sig; g_stop = 1; }
+static void handle_stop(int sig) { (void)sig; shutdown_flag = 1; }
 
 /* SIGPIPE: il warehouse ha chiuso il lato lettura della FIFO (e' morto).
  * L'handler DEVE esistere: il comportamento di default di SIGPIPE e'
  * terminare il processo. Con l'handler installato la write che ha generato
  * il segnale ritorna -1 con errno=EPIPE (gestito al punto di chiamata);
- * qui in piu' alziamo g_stop, perche' senza warehouse non c'e' altro da fare. */
+ * qui in piu' alziamo shutdown_flag, perche' senza warehouse non c'e' altro da fare. */
 
 /* ====== Parsing del .conf =================================================== */
 /* csv_field() NON va in common.c: risolve un problema specifico del warehouse
@@ -80,7 +78,7 @@ static void handle_stop(int sig) { (void)sig; g_stop = 1; }
  * sscanf("%d,%d,%d") perche' il suo .conf ha solo interi, generati da
  * bootstrap.sh. Regola: in common.c vanno solo funzioni usate da piu' file
  * con lo STESSO identico scopo (es. write_all, setup_handler). */
-static int load_config(const char *path, SupplyPlan *plan, int max_items)
+static int load_config(const char *path, RestockSchedule *plan, int max_items)
 {
     int fd = open(path, O_RDONLY);
     if (fd < 0) {
@@ -93,10 +91,10 @@ static int load_config(const char *path, SupplyPlan *plan, int max_items)
 
     /* Header obbligatorio (strncmp, Lab06): tollera \r\n finale.
      * Il .conf e' generato da bootstrap.sh: header diverso = file rotto. */
-    if (fd_read_line(fd, line, sizeof(line)) <= 0 ||
+    if (read_line_from_fd(fd, line, sizeof(line)) <= 0 ||
         strncmp(line, CONF_HEADER, strlen(CONF_HEADER)) != 0) {
-        fprintf(stderr, "[SUPPLIER] '%s': header mancante o non valido "
-                        "(atteso '%s')\n", path, CONF_HEADER);
+        fprintf(stderr, "[SUPPLIER] '%s': missing/invalid header."
+                        "(expected '%s')\n", path, CONF_HEADER);
         close(fd);
         return -1;
     }
@@ -110,16 +108,16 @@ static int load_config(const char *path, SupplyPlan *plan, int max_items)
          * (ritorna il numero di conversioni riuscite). Nota per il report:
          * sscanf non compare nei lab ma e' C standard; l'alternativa
          * lab-only sarebbe strtok+atoi (Lab02). */
-        SupplyPlan *it = &plan[count];
+        RestockSchedule *it = &plan[count];
         if (sscanf(line, "%d,%d,%d",
                    &it->item_id, &it->quantity, &it->interval) != 3) {
-            fprintf(stderr, "[SUPPLIER] '%s': riga malformata: %s",
+            fprintf(stderr, "[SUPPLIER] '%s': malformed line: %s",
                     path, line);   /* line contiene gia' il suo \n */
             close(fd);
             return -1;
         }
         if (it->item_id < 1 || it->quantity < 1 || it->interval < 1) {
-            fprintf(stderr, "[SUPPLIER] '%s': valori non positivi: %s",
+            fprintf(stderr, "[SUPPLIER] '%s': non-positive values: %s",
                     path, line);
             close(fd);
             return -1;
@@ -128,13 +126,13 @@ static int load_config(const char *path, SupplyPlan *plan, int max_items)
         count++;
     }
     if (n < 0) {
-        fprintf(stderr, "[SUPPLIER] read '%s': %s\n", path, strerror(errno));
+        fprintf(stderr, "[SUPPLIER] failed to read '%s': %s\n", path, strerror(errno));
         close(fd);
         return -1;
     }
     close(fd);
     if (count == 0) {
-        fprintf(stderr, "[SUPPLIER] '%s': nessun item valido\n", path);
+        fprintf(stderr, "[SUPPLIER] '%s': no valid items.\n", path);
         return -1;
     }
     return count;
@@ -149,7 +147,7 @@ int main(int argc, char *argv[])
     }
     int supplier_id = atoi(argv[1]);
     if (supplier_id <= 0) {
-        fprintf(stderr, "[SUPPLIER] supplier_id deve essere >= 1\n");
+        fprintf(stderr, "[SUPPLIER] supplier_id must be >= 1\n");
         return ERR_USAGE;
     }
 
@@ -160,8 +158,8 @@ int main(int argc, char *argv[])
     setup_handler(SIGINT,  handle_stop);
     setup_handler(SIGPIPE, SIG_IGN);
 
-    SupplyPlan plan[MAX_CONF_ITEMS];
-    int n_items = load_config(argv[2], plan, MAX_CONF_ITEMS);
+    RestockSchedule schedule[MAX_CONF_ITEMS];
+    int n_items = load_config(argv[2], schedule, MAX_CONF_ITEMS);
     if (n_items < 0) return ERR_IO;
 
     /* Apertura BLOCCANTE della RESTOCK_FIFO in scrittura: aspetta che il
@@ -169,13 +167,13 @@ int main(int argc, char *argv[])
      * il warehouse PRIMA dei supplier, quindi l'attesa e' breve.
      * Essendo bloccante, la open puo' essere interrotta da un segnale
      * (EINTR): in quel caso riproviamo, a meno che non sia un segnale di
-     * terminazione (g_stop). Stesso trattamento di read/write_all (Lab05). */
+     * terminazione (shutdown_flag). Stesso trattamento di read/write_all (Lab05). */
     int fifo_fd = -1;
-    while (fifo_fd < 0 && !g_stop) {
+    while (fifo_fd < 0 && !shutdown_flag) {
         fifo_fd = open(RESTOCK_FIFO, O_WRONLY);
         if (fifo_fd < 0) {
             if (errno == EINTR) continue;
-            fprintf(stderr, "[SUPPLIER %d] open '%s': %s\n",
+            fprintf(stderr, "[SUPPLIER %d] failed to open '%s': %s\n",
                     supplier_id, RESTOCK_FIFO, strerror(errno));
             return ERR_IO;
         }
@@ -184,31 +182,31 @@ int main(int argc, char *argv[])
 
 
 
-    while (!g_stop) {
+    while (!shutdown_flag) {
         /* 1. trova il minimo countdown: e' quanto possiamo dormire */
-        int min_cd = plan[0].countdown;
+        int min_cd = schedule[0].countdown;
         for (int i = 1; i < n_items; i++)
-            if (plan[i].countdown < min_cd) min_cd = plan[i].countdown;
+            if (schedule[i].countdown < min_cd) min_cd = schedule[i].countdown;
 
         /* 2. dormi: sleep ritorna i secondi NON dormiti se interrotta da un
          *    segnale (es. SIGTERM) -> slept e' il tempo realmente trascorso */
         unsigned int left  = sleep((unsigned int)min_cd);
         int          slept = min_cd - (int)left;
-        if (g_stop) break;
+        if (shutdown_flag) break;
 
         /* 3. aggiorna i countdown e spedisci gli item arrivati a zero */
         for (int i = 0; i < n_items; i++) {
-            plan[i].countdown -= slept;
+            schedule[i].countdown -= slept;
             /* countdown >= 0 per costruzione (slept <= min_cd <= countdown), non serve fare clipping a 0*/
-            if (plan[i].countdown > 0) continue;
+            if (schedule[i].countdown > 0) continue;
 
-            RestockMsg msg = { supplier_id, plan[i].item_id, plan[i].quantity };
+            RestockMsg msg = { supplier_id, schedule[i].item_id, schedule[i].quantity };
             if (write_all(fifo_fd, &msg, sizeof(msg)) < 0) {
-                fprintf(stderr, "[SUPPLIER %d] write su FIFO: %s\n", supplier_id, strerror(errno));
+                fprintf(stderr, "[SUPPLIER %d] failed to write on FIFO: %s\n", supplier_id, strerror(errno));
                 close(fifo_fd);
                 return ERR_WAREHOUSE_DOWN;
             }
-           plan[i].countdown = plan[i].interval;   /* riarma il timer */
+           schedule[i].countdown = schedule[i].interval;   /* riarma il timer */
         }
     }
 

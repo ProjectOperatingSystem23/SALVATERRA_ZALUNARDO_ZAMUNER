@@ -1,5 +1,5 @@
 /* ============================================================================
- * order_client.c  --  Helper C dello script order.sh (Project 2026-3)
+ * order_helper.c  --  Helper C dello script order.sh (Project 2026-3)
  *
  * Uso (invocato da order.sh, NON direttamente dall'utente finale):
  *   ./order_client <client_id> <item_id> <quantity>
@@ -24,7 +24,7 @@
  *                   sono al warehouse, che e' l'autorita' semantica.
  *   - warehouse   : verita' su quantita' (<=0 -> ERR_INVALID_QTY), esistenza
  *                   item (-> ERR_ITEM_NOT_FOUND), stock (-> ERR_OUT_OF_STOCK /
- *                   ERR_PARTIAL). Tenere qui questi controlli e' DIFESA IN
+ *                   ERR_PARTIAL_FILL). Tenere qui questi controlli e' DIFESA IN
  *                   PROFONDITA' per chi chiamasse order_client direttamente.
  *
  * PROTOCOLLO FIFO PRIVATA -- il punto delicato (DEVE combaciare con warehouse.c):
@@ -32,7 +32,7 @@
  *   se in quel momento NON c'e' gia' un lettore, la open fallisce (ENXIO) e la
  *   risposta va persa. Percio' order_client DEVE avere il lato lettura della
  *   resp_fifo gia' aperto PRIMA di inviare l'OrderRequest, e tenerlo aperto fino
- *   alla lettura della risposta. Usiamo lo STESSO schema di open_fifo_rw del
+ *   alla lettura della risposta. Usiamo lo STESSO schema di open_fifo_r_dw del
  *   warehouse:
  *       read-end O_NONBLOCK  -> la open non blocca anche senza writer
  *       write-end "dummy"    -> c'e' SEMPRE >=1 writer: niente EOF spurio nella
@@ -41,7 +41,7 @@
  *       fcntl(F_SETFL)       -> toglie O_NONBLOCK: la read finale e' bloccante
  *   NB: fcntl(F_GETFL/F_SETFL) NON compare nei lab (li' c'e' solo
  *   #include <fcntl.h> per i flag di open): e' una deviazione DICHIARATA, identica
- *   a quella che il warehouse usa in open_fifo_rw. La teniamo per coerenza interna
+ *   a quella che il warehouse usa in open_fifo_r_dw. La teniamo per coerenza interna
  *   col progetto (da segnalare nel report).
  *
 * SEGNALI (Lab03):
@@ -72,8 +72,6 @@
  *              Lab06 (FIFO: mkfifo, semantica di blocco e O_NONBLOCK).
  * ============================================================================ */
 
-#define _POSIX_C_SOURCE 200809L
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,16 +87,16 @@
 #define RESP_TIMEOUT_SECONDS  30
 
 /* ====== Flag settati dagli handler (Lab03): solo sig_atomic_t volatile ====== */
-static volatile sig_atomic_t g_timed_out = 0;   /* alzato da SIGALRM            */
+static volatile sig_atomic_t timed_out_flag = 0;   /* alzato da SIGALRM            */
 
-static void on_alarm(int sig) { (void)sig; g_timed_out = 1; }
+static void on_alarm(int sig) { (void)sig; timed_out_flag = 1; }
 
 /* ====== I/O di basso livello (Lab05) ======================================= */
 
 
 /* read "completa" della risposta, SENSIBILE AL TIMEOUT. A differenza della
  * read_all del warehouse, su EINTR NON riprendiamo ciecamente: se l'interruzione
- * e' dovuta a SIGALRM (g_timed_out) abbandoniamo, cosi' il timeout e' effettivo.
+ * e' dovuta a SIGALRM (timed_out_flag) abbandoniamo, cosi' il timeout e' effettivo.
  * Ritorna i byte letti, 0 = EOF (non atteso: teniamo la dummy write), -1 = errore. */
 static ssize_t read_response(int fd, void *buf, size_t len)
 {
@@ -107,7 +105,7 @@ static ssize_t read_response(int fd, void *buf, size_t len)
         ssize_t n = read(fd, (char *)buf + done, len - done);
         if (n < 0) {
             if (errno == EINTR) {
-                if (g_timed_out) return -1;   /* timeout scaduto: molla        */
+                if (timed_out_flag) return -1;   /* timeout scaduto: molla        */
                 continue;                     /* altro segnale: riprova        */
             }
             return -1;
@@ -126,27 +124,27 @@ static void print_outcome(const char *client_id, const OrderResponse *r)
 {
     switch (r->status) {
     case ERR_OK:
-        printf("[OK] %s: ordine COMPLETO  item=%d  spedite=%d/%d\n",
+        printf("[OK] %s: orders complete item=%d  shipped=%d/%d\n",
                client_id, r->item_id, r->qty_shipped, r->qty_requested);
         break;
-    case ERR_PARTIAL:
-        printf("[PARZIALE] %s: item=%d  spedite=%d/%d  (rifiutate=%d, stock insufficiente)\n",
+    case ERR_PARTIAL_FILL:
+        printf("[PARTIAL] %s: item=%d  shipped=%d/%d  (rejected=%d, insufficient stock)\n",
                client_id, r->item_id, r->qty_shipped, r->qty_requested, r->qty_rejected);
         break;
     case ERR_ITEM_NOT_FOUND:
-        printf("[RIFIUTATO] %s: item=%d inesistente in inventario\n",
+        printf("[REJECTED] %s: item=%d does not exist in the inventory\n",
                client_id, r->item_id);
         break;
     case ERR_OUT_OF_STOCK:
-        printf("[RIFIUTATO] %s: item=%d esaurito (out of stock)\n",
+        printf("[REJECTED] %s: item=%d is out of stock\n",
                client_id, r->item_id);
         break;
     case ERR_INVALID_QTY:
-        printf("[RIFIUTATO] %s: quantita' non valida (%d)\n",
+        printf("[REJECTED] %s: invalid quantity (%d)\n",
                client_id, r->qty_requested);
         break;
     default:
-        printf("[RIFIUTATO] %s: item=%d  status=%d\n",
+        printf("[REJECTED] %s: item=%d  status=%d\n",
                client_id, r->item_id, r->status);
         break;
     }
@@ -166,7 +164,7 @@ int main(int argc, char *argv[])
     /* Sicurezza del wire-format: client_id deve entrare nel campo della struct
      * (MAX_CLIENT_ID, NUL incluso). L'helper non si fida del chiamante. */
     if (client_id[0] == '\0' || strlen(client_id) >= MAX_CLIENT_ID) {
-        fprintf(stderr, "[ORDER] client_id mancante o troppo lungo (max %d)\n",
+        fprintf(stderr, "[ORDER] client_id missing or too long (max %d)\n",
                 MAX_CLIENT_ID - 1);
         return ERR_USAGE;
     }
@@ -179,8 +177,8 @@ int main(int argc, char *argv[])
     char resp_path[MAX_RESP_FIFO];
     snprintf(resp_path, sizeof(resp_path), RESP_FIFO_TEMPLATE, (int)getpid());
 
-    int rfd, wdummy;
-    if (open_fifo_rw(resp_path, 0600, &rfd, &wdummy) != 0) {
+    int resp_fd, resp_dummy_w_fd;
+    if (open_fifo_r_dw(resp_path, 0600, &resp_fd, &resp_dummy_w_fd) != 0) {
         fprintf(stderr, "[ORDER] init resp_fifo '%s': %s\n", resp_path, strerror(errno));
         unlink(resp_path);              /* se mkfifo l'aveva creata, la rimuoviamo */
         return ERR_IO;
@@ -191,7 +189,7 @@ int main(int argc, char *argv[])
 
     /* ---- 3. apri la ORDERS_FIFO in scrittura (bloccante) ----
      * Aspetta che il warehouse abbia il lato lettura aperto (lo tiene sempre, via
-     * la sua dummy read-end in open_fifo_rw). order.sh ha gia' verificato che il
+     * la sua dummy read-end in open_fifo_r_dw). order.sh ha gia' verificato che il
      * warehouse sia vivo; l'alarm copre il caso limite di una FIFO orfana.
      * EINTR: se e' il timeout esco, altrimenti riprovo. */
     int ofd = -1;
@@ -199,18 +197,18 @@ int main(int argc, char *argv[])
         ofd = open(ORDERS_FIFO, O_WRONLY);
         if (ofd < 0) {
             if (errno == EINTR) {
-                if (g_timed_out) {
-                    fprintf(stderr, "[ORDER] timeout in apertura ORDERS_FIFO "
-                                    "(warehouse non risponde)\n");
-                    close(rfd); close(wdummy); unlink(resp_path);
+                if (timed_out_flag) {
+                    fprintf(stderr, "[ORDER] timeout while opening ORDERS_FIFO "
+                                    "(warehouse is not responding)\n");
+                    close(resp_fd); close(resp_dummy_w_fd); unlink(resp_path);
                     return ERR_TIMEOUT;
                 }
                 continue;
             }
             /* ENOENT (FIFO assente) o ENXIO (nessun lettore): warehouse giu'. */
-            fprintf(stderr, "[ORDER] open '%s': %s (warehouse attivo?)\n",
+            fprintf(stderr, "[ORDER] open '%s': %s (is the warehouse active?)\n",
                     ORDERS_FIFO, strerror(errno));
-            close(rfd); close(wdummy); unlink(resp_path);
+            close(resp_fd); close(resp_dummy_w_fd); unlink(resp_path);
             return ERR_WAREHOUSE_DOWN;
         }
     }
@@ -228,8 +226,8 @@ int main(int argc, char *argv[])
      *write ti restituisce già -1 con errno == EPIPE esattamente dove e quando serve. Un handler che alza un flag non
      *aggiunge nessuna informazione che errno==EPIPE non ti dia già.*/
     if (write_all(ofd, &req, sizeof(req)) < 0) {
-        fprintf(stderr, "[ORDER] write su ORDERS_FIFO: %s\n", strerror(errno));
-        close(ofd); close(rfd); close(wdummy); unlink(resp_path);
+        fprintf(stderr, "[ORDER] write to ORDERS_FIFO: %s\n", strerror(errno));
+        close(ofd); close(resp_fd); close(resp_dummy_w_fd); unlink(resp_path);
         return ERR_IO;
     }
     close(ofd);                                 /* non serve piu' scrivere */
@@ -237,20 +235,20 @@ int main(int argc, char *argv[])
     /* ---- 5. attendi la risposta sulla FIFO privata ---- */
     OrderResponse resp;
     memset(&resp, 0, sizeof(resp));
-    ssize_t n = read_response(rfd, &resp, sizeof(resp));
+    ssize_t n = read_response(resp_fd, &resp, sizeof(resp));
     alarm(0);                                   /* disarma il timeout */
 
-    close(rfd);
-    close(wdummy);
+    close(resp_fd);
+    close(resp_dummy_w_fd);
     unlink(resp_path);                          /* la resp_fifo e' nostra: via */
 
     if (n != (ssize_t)sizeof(resp)) {
-        if (g_timed_out) {
-            fprintf(stderr, "[ORDER] timeout: nessuna risposta dal warehouse "
-                            "entro %d s\n", RESP_TIMEOUT_SECONDS);
+        if (timed_out_flag) {
+            fprintf(stderr, "[ORDER] timeout: no response from the warehouse "
+                            "within %d s\n", RESP_TIMEOUT_SECONDS);
             return ERR_TIMEOUT;
         }
-        fprintf(stderr, "[ORDER] risposta assente o troncata (%zd byte)\n", n);
+        fprintf(stderr, "[ORDER] missing or truncated response (%zd byte)\n", n);
         return ERR_IO;
     }
 

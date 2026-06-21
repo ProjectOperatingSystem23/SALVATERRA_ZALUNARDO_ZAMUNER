@@ -1,5 +1,5 @@
 /* ============================================================================
- * manual_restock.c  --  Helper C dello script manage.sh (Project 2026-3)
+ * manage_restock_helper.c  --  Helper C dello script manage.sh (Project 2026-3)
  *
  * Uso (invocato da manage.sh restock, NON direttamente dall'utente finale):
  *   ./manual_restock <item_id> <quantity>
@@ -38,7 +38,7 @@
  *       sizeof(RestockMsg)=12 byte << PIPE_BUF (4096): la write e' comunque
  *       ATOMICA e non blocca (man 7 pipe), quindi O_NONBLOCK sul lato scrittura
  *       non cambia la semantica della write.
- *   [SIGPIPE CON HANDLER - Lab03]  Come supplier.c/order_client.c: il default
+ *   [SIGPIPE CON HANDLER - Lab03]  Come supplier.c/order_helper.c: il default
  *       di SIGPIPE terminerebbe il processo. Con l'handler installato, se il
  *       warehouse muore proprio mentre scriviamo, la write ritorna -1/EPIPE
  *       (gestito -> ERR_WAREHOUSE_DOWN) invece di ucciderci.
@@ -48,8 +48,6 @@
  *
  * Riferimenti: Lab03 (segnali, sigaction), Lab05 (fd/IO, EINTR), Lab06 (FIFO).
  * ============================================================================ */
-
-#define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>      /* fprintf, perror            */
 #include <stdlib.h>     /* atoi                       */
@@ -76,15 +74,15 @@ int main(int argc, char *argv[])
     int quantity = atoi(argv[2]);
 
     if (item_id <= 0) {
-        fprintf(stderr, "[RESTOCK] item_id deve essere >= 1 (ricevuto '%s')\n", argv[1]);
+        fprintf(stderr, "[RESTOCK] item_id must be >= 1 (received '%s')\n", argv[1]);
         return ERR_USAGE;
     }
     if (quantity <= 0) {
-        fprintf(stderr, "[RESTOCK] quantity deve essere >= 1 (ricevuto '%s')\n", argv[2]);
+        fprintf(stderr, "[RESTOCK] quantity must be >= 1 (received '%s')\n", argv[2]);
         return ERR_USAGE;
     }
 
-    /* SIGPIPE gestito con handler (Lab03), come supplier.c/order_client.c. */
+    /* SIGPIPE gestito con handler (Lab03), come supplier.c/order_helper.c. */
     setup_handler(SIGPIPE, SIG_IGN);
 
     /* Apertura NON bloccante: se il warehouse non c'e' (nessun lettore della
@@ -94,11 +92,11 @@ int main(int argc, char *argv[])
         /* ENXIO = FIFO esiste ma nessun lettore; ENOENT = FIFO assente:
          * in entrambi i casi il warehouse non e' pronto/attivo. */
         if (errno == ENXIO || errno == ENOENT) {
-            fprintf(stderr, "[RESTOCK] warehouse non attivo "
+            fprintf(stderr, "[RESTOCK] warehouse down"
                             "(FIFO '%s': %s)\n", RESTOCK_FIFO, strerror(errno));
             return ERR_WAREHOUSE_DOWN;
         }
-        fprintf(stderr, "[RESTOCK] open '%s': %s\n", RESTOCK_FIFO, strerror(errno));
+        fprintf(stderr, "[RESTOCK] failed to open '%s': %s\n", RESTOCK_FIFO, strerror(errno));
         return ERR_IO;
     }
 
@@ -107,7 +105,7 @@ int main(int argc, char *argv[])
 
     RestockMsg msg = { MANUAL_RESTOCK_SUPPLIER_ID, item_id, quantity };
     if (write_all(fd, &msg, sizeof(msg)) < 0) {
-        fprintf(stderr, "[RESTOCK] write su '%s': %s\n", RESTOCK_FIFO, strerror(errno));
+        fprintf(stderr, "[RESTOCK] failed to write on '%s': %s\n", RESTOCK_FIFO, strerror(errno));
         close(fd);
         return ERR_IO;
     }
