@@ -380,6 +380,10 @@ static void bq_destroy(BoundedQueue *q)
  * ramo -1 e' solo difensivo: nessun ordine in volo viene davvero scartato. */
 static int bq_push(BoundedQueue *q, const Order *o)
 {
+    /*Una sveglia spuria è quando pthread_cond_wait ritorna senza un vero motivo
+     *(nessun signal/broadcast reale) — il while invece di if protegge da questo,
+     *perché ricontrolla sempre la condizione vera prima di procedere, invece di
+     *fidarsi ciecamente del fatto di essersi svegliato.*/
     pthread_mutex_lock(&q->mutex);
     while (q->count == q->capacity && !q->shutdown)        /* pattern Lab04     */
         pthread_cond_wait(&q->not_full, &q->mutex);
