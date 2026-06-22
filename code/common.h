@@ -5,8 +5,8 @@
 #include <stddef.h>     /* size_t */
 
 /* ============================================================================
- * common.h — Definizioni condivise tra warehouse, supplier, order_client,
- *            manual_restock e gli script Bash.
+ * common.h — Definizioni condivise tra warehouse, supplier, order_helper,
+ *            mmanual_restock e gli script Bash.
  *
  * Questo file e' l'INTERFACCIA BINARIA del sistema. Tutti i processi che si
  * scambiano messaggi via FIFO devono includere ESATTAMENTE questa stessa
