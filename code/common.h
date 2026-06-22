@@ -28,7 +28,7 @@
 /* ====== 1. IPC PATHS AND SYSTEM FILES ====================================== */
 #define ORDERS_FIFO          "/tmp/orders_fifo"    /* order.sh  -> warehouse    */
 #define RESTOCK_FIFO         "/tmp/restock_fifo"   /* supplier  -> warehouse    */
-#define RESP_FIFO_TEMPLATE   "/tmp/order_resp_%d"  /* warehouse -> order_client
+#define RESP_FIFO_TEMPLATE   "/tmp/order_resp_%d"  /* warehouse -> order_helper
                                                     * (una FIFO privata per
                                                     * client, %d = PID)         */
 #define LOG_FILE             "orders.log"          /* scritto dai packer        */
@@ -45,7 +45,7 @@
 /* Dove vengono usati:
  *   - OrderResponse.status (warehouse -> client): OK/NOT_FOUND/OUT_OF_STOCK/
  *     INVALID_QTY/PARTIAL;
- *   - exit code dei processi C (supplier, order_client, manual_restock):
+ *   - exit code dei processi C (supplier, order_helper, manage_restock_helper):
  *     OK/USAGE/IO/WAREHOUSE_DOWN;
  *   - exit code degli script Bash (order.sh, manage.sh), che li ricopiano. */
 
@@ -69,7 +69,7 @@
 /* ====== 4. SPECIAL VALUES ================================================== */
 /*
  * MANUAL_RESTOCK_SUPPLIER_ID
- * Usato da manage.sh (tramite l'helper manual_restock) per inviare un restock
+ * Usato da manage.sh (tramite l'helper manage_restock_helper) per inviare un restock
  * manuale via RESTOCK_FIFO, riutilizzando la stessa struct RestockMsg dei
  * supplier reali. Il warehouse distingue:
  *   supplier_id == 0 -> restock manuale,
@@ -88,7 +88,7 @@
  * messaggi di writer concorrenti non si mischiano (man 7 pipe). Tutte e tre
  * le struct stanno ampiamente sotto questo limite. */
 
-/* order_client -> warehouse (su ORDERS_FIFO) */
+/* order_helper -> warehouse (su ORDERS_FIFO) */
 typedef struct {
     char client_id[MAX_CLIENT_ID];
     char resp_fifo[MAX_RESP_FIFO];  /* path della FIFO privata del client */
@@ -96,7 +96,7 @@ typedef struct {
     int  quantity;
 } OrderRequest;
 
-/* warehouse -> order_client (sulla resp_fifo privata del client) */
+/* warehouse -> order_helper (sulla resp_fifo privata del client) */
 typedef struct {
     int status;       /* ERR_* code */
     int item_id;
@@ -113,7 +113,7 @@ typedef struct {
 } RestockMsg;
 
 /* ====== 6. HELPER CONDIVISI (definiti in common.c) ========================= */
-/* Funzioni identiche usate da warehouse, supplier e order_client: definite UNA
+/* Funzioni identiche usate da warehouse, supplier e order_helper: definite UNA
  * sola volta in common.c e linkate in tutti gli eseguibili (DRY, niente
  * divergenze). I flag dei segnali (g_stop, g_timed_out, ...) restano invece
  * locali a ciascun processo perche' sono stato per-processo. */

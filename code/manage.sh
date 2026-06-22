@@ -14,7 +14,7 @@
 #               STATUS_FILE; lo script lo legge e lo formatta. Il numero di
 #               processi vivi e' verificato con "kill -0" (un segnale "nullo"
 #               che non viene consegnato: serve solo a sapere se il PID esiste).
-#   - restock : delega l'IPC binario all'helper C ./manual_restock (Bash non sa
+#   - restock : delega l'IPC binario all'helper C ./manage_restock_helper (Bash non sa
 #               scrivere struct sulle FIFO), che scrive un RestockMsg sulla
 #               RESTOCK_FIFO con supplier_id=0 (= restock manuale, common.h).
 #   - report  : analizza orders.log con grep/cut/sort/uniq/awk/wc (Lab09).
@@ -44,7 +44,7 @@ WAREHOUSE_PID_FILE="/tmp/warehouse.pid"
 SUPPLIERS_PID_FILE="/tmp/suppliers.pid"
 LOG_FILE="orders.log"
 CONF_DIR="./supplier_configs"
-RESTOCK_HELPER="./manual_restock"
+RESTOCK_HELPER="./manage_restock_helper"
 
 # err: messaggio su stderr (fd 2), convenzione Unix (Lab05).
 err() { printf '%s\n' "$*" >&2; }

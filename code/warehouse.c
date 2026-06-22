@@ -483,7 +483,7 @@ static void log_order(int log_fd, pthread_mutex_t *log_mutex, const Order *o)
  * per NON bloccarci se il client e' morto nel frattempo (in quel caso open
  * fallisce con ENXIO "no reader" o ENOENT "fifo rimossa"): senza O_NONBLOCK
  * un packer resterebbe appeso per sempre su un client defunto.
- * La risposta resta in formato BINARIO (OrderResponse): e' order_client a
+ * La risposta resta in formato BINARIO (OrderResponse): e' order_helper a
  * tradurla in output human-readable per l'utente.
  * ═══════════════════════════════════════════════════════════════════════════ */
 static void send_response(const char *resp_fifo, const OrderResponse *resp)
@@ -898,7 +898,7 @@ int main(int argc, char *argv[])
     setup_handler(SIGUSR1, handle_status_dump);
     /* SIGPIPE ignorato: se un client chiude la sua resp_fifo, la write deve
      * fallire con EPIPE (gestito), NON terminare il warehouse. */
-    setup_handler(SIGPIPE, SIG_IGN); 
+    setup_handler(SIGPIPE, SIG_IGN);
 
     /* ---- struct-argomento (riferimenti, niente globali: Lab04) ---- */
     ReceiverArgs receiver_args = { orders_fd, &orders_read_mutex, &inv, &pending,

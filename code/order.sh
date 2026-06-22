@@ -9,13 +9,13 @@
 # binarie sulle FIFO, quindi si divide il lavoro (spec 2.2.9):
 #   1. valida gli argomenti        (Lab07: test su stringhe, case);
 #   2. verifica che il warehouse sia vivo (PID file + kill -0, Lab03);
-#   3. delega l'IPC binario all'helper ./order_client (Lab06);
+#   3. delega l'IPC binario all'helper ./order_helper (Lab06);
 #   4. ripropaga il suo exit code, che e' uno degli ERR_* di common.h.
 #
 # Perche' un helper C e non "echo > fifo"? Una struct OrderRequest e' un blocco
 # BINARIO (interi + buffer a lunghezza fissa): con echo scriveremmo testo, che
 # il warehouse interpreterebbe come byte sbagliati. Serve write(2) di
-# sizeof(OrderRequest) -> lo fa order_client. La risposta va letta su una FIFO
+# sizeof(OrderRequest) -> lo fa order_helper. La risposta va letta su una FIFO
 # privata perche' l'ordine e' SINCRONO: il client resta in attesa dell'esito
 # (shipped/partial/rejected) e lo traduce in exit code; due FIFO (richiesta +
 # risposta) servono perche' una named pipe e' unidirezionale (Lab06).
@@ -35,7 +35,7 @@ ORDERS_FIFO="/tmp/orders_fifo"
 WAREHOUSE_PID_FILE="/tmp/warehouse.pid"
 
 # ---- Helper C (path relativo: va lanciato dalla cartella del progetto) ----
-HELPER="./order_client"
+HELPER="./order_helper"
 
 # err: messaggio su stderr (fd 2), convenzione Unix (Lab05).
 err() { printf '%s\n' "$*" >&2; }

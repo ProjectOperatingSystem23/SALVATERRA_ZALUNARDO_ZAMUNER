@@ -17,12 +17,12 @@
  *
  *   Il restock e' ASINCRONO (fire-and-forget): il thread "restock" del
  *   warehouse legge il messaggio e incrementa lo stock quando lo elabora. Non
- *   c'e' FIFO di risposta (a differenza di order_client): per vedere il nuovo
+ *   c'e' FIFO di risposta (a differenza di order_helper): per vedere il nuovo
  *   stock si usa ./manage.sh status.
  *
- * GERARCHIA DI VALIDAZIONE (come order_client / order.sh):
+ * GERARCHIA DI VALIDAZIONE (come order_helper / order.sh):
  *   - manage.sh     : input lato utente (item_id/qty interi >= 1);
- *   - manual_restock: ricontrolla item_id/qty >= 1 (difesa in profondita' per
+ *   - manage_restock_helper: ricontrolla item_id/qty >= 1 (difesa in profondita' per
  *                     chi lo chiamasse direttamente) e la sicurezza del
  *                     wire-format;
  *   - warehouse     : autorita' semantica (item esistente? -> altrimenti

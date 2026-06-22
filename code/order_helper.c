@@ -2,7 +2,7 @@
  * order_helper.c  --  Helper C dello script order.sh (Project 2026-3)
  *
  * Uso (invocato da order.sh, NON direttamente dall'utente finale):
- *   ./order_client <client_id> <item_id> <quantity>
+ *   ./order_helper <client_id> <item_id> <quantity>
  *
  * RUOLO (spec 2.2.2 / 2.3 "Order script"):
  *   E' il lato CLIENT del protocollo richiesta/risposta sulle FIFO. Bash non sa
@@ -18,19 +18,19 @@
  *
  * GERARCHIA DI VALIDAZIONE (chi controlla cosa, per non duplicare la logica):
  *   - order.sh    : input lato utente (charset client_id, item_id>=1, qty>=1).
- *   - order_client: SOLO la sicurezza del wire-format (client_id non vuoto e che
+ *   - order_helper: SOLO la sicurezza del wire-format (client_id non vuoto e che
  *                   entri nel campo della struct). Per il resto e' un trasporto
  *                   "prudente ma fidato": item_id/quantity passano cosi' come
  *                   sono al warehouse, che e' l'autorita' semantica.
  *   - warehouse   : verita' su quantita' (<=0 -> ERR_INVALID_QTY), esistenza
  *                   item (-> ERR_ITEM_NOT_FOUND), stock (-> ERR_OUT_OF_STOCK /
  *                   ERR_PARTIAL_FILL). Tenere qui questi controlli e' DIFESA IN
- *                   PROFONDITA' per chi chiamasse order_client direttamente.
+ *                   PROFONDITA' per chi chiamasse order_helper direttamente.
  *
  * PROTOCOLLO FIFO PRIVATA -- il punto delicato (DEVE combaciare con warehouse.c):
  *   Il warehouse, in send_response(), apre la resp_fifo in O_WRONLY|O_NONBLOCK:
  *   se in quel momento NON c'e' gia' un lettore, la open fallisce (ENXIO) e la
- *   risposta va persa. Percio' order_client DEVE avere il lato lettura della
+ *   risposta va persa. Percio' order_helper DEVE avere il lato lettura della
  *   resp_fifo gia' aperto PRIMA di inviare l'OrderRequest, e tenerlo aperto fino
  *   alla lettura della risposta. Usiamo lo STESSO schema di open_fifo_r_dw del
  *   warehouse:
