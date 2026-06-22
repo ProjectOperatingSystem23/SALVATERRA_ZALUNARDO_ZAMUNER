@@ -64,7 +64,7 @@ usage() {
     err "  status                 shows processes, queues and inventory"
     err "  restock <item_id> <qty> sends a manual restock"
     err "  report                 displays statistics from $LOG_FILE"
-    err "  shutdown               shuts everything down and cleans allocated IPC resourestock_eces"
+    err "  shutdown               shuts everything down and cleans allocated IPC resources"
     exit "$ERR_USAGE"
 }
 
@@ -127,7 +127,7 @@ cmd_status() {
         sleep 0.1
     done
     [ -s "$STATUS_FILE" ] || die "$ERR_TIMEOUT" "Warehouse didn't produce the status dump in time."
-    #nons serve fare controllo -r perestock_eché warehouse l ha aperto con permessi 0644
+    #non serve fare controllo -r perché warehouse l ha aperto con permessi 0644
     echo
     echo "=== Queues (items / capacity') ==="
     echo "  Pending   : $(grep '^PENDING_QUEUE='   "$STATUS_FILE" | cut -d= -f2)"
@@ -248,7 +248,7 @@ cmd_shutdown() {
                 kill -0 "$wpid" 2>/dev/null || break
                 sleep 0.2
             done
-            kill -0 "$wpid" 2>/dev/null && { err "Warehouse timed out: forestock_ece SIGKILL."; kill -KILL "$wpid" 2>/dev/null; }
+            kill -0 "$wpid" 2>/dev/null && { err "Warehouse timed out: force SIGKILL."; kill -KILL "$wpid" 2>/dev/null; }
         fi
     fi
 
@@ -259,7 +259,7 @@ cmd_shutdown() {
     rm -f /tmp/order_resp_*          # FIFO private dei client eventualmente orfane
     rm -rf "$CONF_DIR"               # supplier_N.conf generati da bootstrap
 
-    [ "$acted" -eq 1 ] && echo "Shutdown complete; IPC resourestock_eces cleaned up." || echo "No active processes; clean up any remaining resourestock_eces."
+    [ "$acted" -eq 1 ] && echo "Shutdown complete; IPC resources cleaned up." || echo "No active processes; clean up any remaining resources."
     return "$ERR_OK"
 }
 

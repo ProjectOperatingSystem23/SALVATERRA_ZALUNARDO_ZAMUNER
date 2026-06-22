@@ -31,9 +31,9 @@
 
 CC = gcc
 CFLAGS = -Wall -Wextra -pedantic
-SRCS = common.c warehouse.c supplier.c order_client.c manual_restock.c
+SRCS = common.c warehouse.c supplier.c order_helper.c manage_restock_helper.c
 OBJS=$(SRCS:.c=.o) # intermedi: .c -> .o (gcc -c), riferimenti irrisolti
-TARGETS = warehouse supplier order_client manual_restock # finali: link (gcc -o); common.o non e' un target (no main)
+TARGETS = warehouse supplier order_helper manage_restock_helper # finali: link (gcc -o); common.o non e' un target (no main)
 SCRIPTS = bootstrap.sh order.sh manage.sh
 ARGS ?= 2 3 3 10 2 inventory.csv
 # Target di default. "build" (richiesto dalla spec 2.3) == "all" (nome dei lab).
@@ -47,10 +47,10 @@ warehouse: warehouse.o common.o
 supplier: supplier.o common.o
 	$(CC) $(CFLAGS) -o $@ $^
 
-order_client: order_client.o common.o
+order_helper: order_helper.o common.o
 	$(CC) $(CFLAGS) -o $@ $^
 
-manual_restock: manual_restock.o common.o
+manage_restock_helper: manage_restock_helper.o common.o
 	$(CC) $(CFLAGS) -o $@ $^
 
 # --- Compilazione: ogni .o dal suo .c  ($< = il file .c) ---
@@ -67,7 +67,7 @@ usage help:
 	@echo "  make clean                removes executables and IPC resources"
 	@echo "  make usage                display this message"
 	@echo ""
-	@echo "Bootstrap interface (argouments passed via ARGS=\"...\"):"
+	@echo "Bootstrap interface (arguments passed via ARGS=\"...\"):"
 	@echo "  <num_receivers> <num_pickers> <num_packers> <queue_capacity> <num_suppliers> <inventory.csv>"
 	@echo ""
 	@echo "Example:"
@@ -81,8 +81,7 @@ usage help:
 # --- clean del prof (rm -f $(OBJS) $(TARGET)) + risorse IPC (spec 2.3) ---
 clean:
 	rm -f $(OBJS) $(TARGETS)
-	rm -f /tmp/orders_fifo /tmp/restock_fifo /tmp/order_resp_* \
-	      /tmp/wh_status.tmp /tmp/warehouse.pid /tmp/suppliers.pid
+	rm -f /tmp/orders_fifo /tmp/restock_fifo /tmp/order_resp_* /tmp/wh_status.tmp /tmp/warehouse.pid /tmp/suppliers.pid
 	rm -f orders.log
 	rm -rf supplier_configs
 

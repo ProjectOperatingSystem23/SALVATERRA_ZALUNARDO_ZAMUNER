@@ -101,7 +101,7 @@ static int load_config(const char *path, RestockSchedule *plan, int max_items)
 
     int count = 0;
     ssize_t n;
-    while (count < max_items && (n = fd_read_line(fd, line, sizeof(line))) > 0) {
+    while (count < max_items && (n = read_line_from_fd(fd, line, sizeof(line))) > 0) {
         if (line[0] == '\r' || line[0] == '\n' || line[0] == '\0') continue;
 
         /* sscanf: legge i 3 campi interi e verifica che siano tutti presenti

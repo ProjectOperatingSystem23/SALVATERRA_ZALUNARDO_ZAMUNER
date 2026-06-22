@@ -21,7 +21,7 @@ void setup_handler(int sig, void (*handler)(int))
 {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = fn;
+    sa.sa_handler = handler;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(sig, &sa, NULL);

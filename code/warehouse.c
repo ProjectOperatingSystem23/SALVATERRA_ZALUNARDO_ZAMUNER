@@ -249,14 +249,14 @@ static int inventory_load(Inventory *inv, const char *path)
 
     char line[512];
     /* salta l'header */
-    if (fd_read_line(fd, line, sizeof(line)) <= 0) {
+    if (read_line_from_fd(fd, line, sizeof(line)) <= 0) {
         fprintf(stderr, "[WAREHOUSE] inventory '%s' empty\n", path);
         close(fd);
         return ERR_IO;
     }
 
     inv->count = 0;
-    while (fd_read_line(fd, line, sizeof(line)) > 0) {
+    while (read_line_from_fd(fd, line, sizeof(line)) > 0) {
         if (line[0] == '\r' || line[0] == '\n' || line[0] == '\0') continue;
         if (inv->count >= MAX_INV_SIZE) {
             fprintf(stderr, "[WAREHOUSE] inventory truncated to %d items\n",
@@ -489,7 +489,7 @@ static void log_order(int log_fd, pthread_mutex_t *log_mutex, const Order *o)
 static void send_response(const char *resp_fifo, const OrderResponse *resp)
 {
     if (resp_fifo == NULL || resp_fifo[0] == '\0') return;
-    int fd = open(resp_fifo, O_WRONLY | O_NONBLOCK);/*TODO: DA METTERE NEL REPORT PERCHÉ APRIAMO IN NON BLOCCANTE (PERCHÉ SE MUORE IL CLIENT NON STIAMO LI BLOCCATI AD ASPETTARE)*/
+    int fd = open(resp_fifo, O_WRONLY | O_NONBLOCK);
     if (fd < 0) {
         fprintf(stderr, "[WAREHOUSE] undeliverable response for '%s': %s "
                         "(client terminated?)\n", resp_fifo, strerror(errno));
@@ -607,7 +607,6 @@ static void *receiver_thread(void *arg)
 
     while (!shutdown_flag) {
         OrderRequest req;
-        /*TODO: SCRIVERE REPORT CHE LE STRUCT SONO MINORI DI PIPEBUF QUINDI LE WRITE SONO ATOMICHE*/
         /* read mutuamente esclusiva: un solo receiver alla volta legge la FIFO.
          * Le write dei client sono atomiche (< PIPE_BUF), quindi nella FIFO ci
          * sono sempre messaggi interi: serializzare le read garantisce che ogni
@@ -797,7 +796,6 @@ static void *restock_thread(void *arg)
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Apertura di una FIFO in lettura + write-end "dummy" (Lab06)
- *TODO: BELLO, METTILO NEL REPORT
  * Trucco standard: teniamo SEMPRE aperta una write-end nostra, cosi' la read()
  * dei thread non vede mai EOF mentre il sistema e' attivo (altrimenti, appena
  * l'ultimo client chiude, read() tornerebbe 0). In chiusura, il main chiude la
@@ -887,7 +885,6 @@ int main(int argc, char *argv[])
      * la maschera viene EREDITATA dai thread creati dopo, che quindi non li
      * riceveranno. (sigprocmask e' ben definito perche' siamo single-thread;
      * pthread_sigmask sarebbe l'equivalente a thread gia' avviati.) */
-    /*TODO: STUDIARSI QUESTE COSE DA SAPERLE SPIEGARE*/
     sigset_t block_set, empty_set;
     sigemptyset(&block_set);
     sigaddset(&block_set, SIGTERM);
@@ -901,7 +898,7 @@ int main(int argc, char *argv[])
     setup_handler(SIGUSR1, handle_status_dump);
     /* SIGPIPE ignorato: se un client chiude la sua resp_fifo, la write deve
      * fallire con EPIPE (gestito), NON terminare il warehouse. */
-    setup_handler(SIGPIPE, SIG_IGN); /*TODO: controlla che l aggancio di SIG_IGN a SIGPIPE vada bene tramite funzione setup handler, settare sa:flags = 0 è innoccuo come extra?*/
+    setup_handler(SIGPIPE, SIG_IGN); 
 
     /* ---- struct-argomento (riferimenti, niente globali: Lab04) ---- */
     ReceiverArgs receiver_args = { orders_fd, &orders_read_mutex, &inv, &pending,

@@ -130,7 +130,7 @@ done
 # ===========================================================================
 
 # -f = file regolare, -x = eseguibile (test su file, Lab07).
-for exe in ./warehouse ./supplier ./order_client ./manual_restock; do
+for exe in ./warehouse ./supplier ./order_helper ./manage_restock_helper; do
     if [ ! -f "$exe" ] || [ ! -x "$exe" ]; then
         die "Error: $exe not found/executable (make build)"
     fi
@@ -240,9 +240,7 @@ fi
 # deve ripulire. Alziamo il flag.
 RUNTIME_CREATED=1
 
-rm -f "$ORDERS_FIFO" "$RESTOCK_FIFO" "$STATUS_FILE" \
-      "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE" \
-    || die "Error: failed to remove old runtime files"
+rm -f "$ORDERS_FIFO" "$RESTOCK_FIFO" "$STATUS_FILE" "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE" || die "Error: failed to remove old runtime files"
 
 # Log della run precedente: lo rimuoviamo cosi' il warehouse (che apre in
 # O_APPEND) riparte da un file vuoto e ./manage.sh report analizza SOLO la
@@ -300,9 +298,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     ITEM_ID=$(printf '%s\n' "$line" | cut -d',' -f1)
     INTERVAL=$(( (RANDOM % INTERVAL_RANGE) + INTERVAL_MIN ))   # 5..15
 
-    printf '%s,%s,%s\n' "$ITEM_ID" "$RESTOCK_QTY" "$INTERVAL" \
-        >> "$CONF_DIR/supplier_${SUPPLIER_IDX}.conf" \
-        || die "Error: failed to update supplier_${SUPPLIER_IDX}.conf"
+    printf '%s,%s,%s\n' "$ITEM_ID" "$RESTOCK_QTY" "$INTERVAL" >> "$CONF_DIR/supplier_${SUPPLIER_IDX}.conf" || die "Error: failed to update supplier_${SUPPLIER_IDX}.conf"
 
     SUPPLIER_IDX=$(( SUPPLIER_IDX + 1 ))
     [ "$SUPPLIER_IDX" -gt "$NUM_SUPPLIERS" ] && SUPPLIER_IDX=1   # wrap-around
