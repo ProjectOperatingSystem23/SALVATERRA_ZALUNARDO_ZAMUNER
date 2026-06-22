@@ -117,14 +117,6 @@ for arg in "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAPACITY" "$NU
     esac
 done
 
-# Normalizzazione in base 10: "0005" o "010" sarebbero altrimenti letti come
-# ottali nelle espressioni aritmetiche (( )). Il prefisso 10# forza la base 10.
-#NUM_RECEIVERS=$((10#$NUM_RECEIVERS))
-#NUM_PICKERS=$((10#$NUM_PICKERS))
-#NUM_PACKERS=$((10#$NUM_PACKERS))
-#QUEUE_CAPACITY=$((10#$QUEUE_CAPACITY))
-#NUM_SUPPLIERS=$((10#$NUM_SUPPLIERS)) TODO: cancellali dal branch ufficiale
-
 # ===========================================================================
 # VALIDAZIONE ESEGUIBILI (spec 2.3: "verify whether the executables are built")
 # ===========================================================================
