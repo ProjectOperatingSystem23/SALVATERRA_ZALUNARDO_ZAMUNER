@@ -84,7 +84,7 @@ clean:
 	rm -f /tmp/orders_fifo /tmp/restock_fifo /tmp/order_resp_* /tmp/wh_status.tmp /tmp/warehouse.pid /tmp/suppliers.pid
 	rm -f orders.log
 	rm -rf supplier_configs
-
+#sgrodolino
 # --- run: scenario d'esempio (spec 2.3) ---
 run: build
 	./bootstrap.sh $(ARGS)
