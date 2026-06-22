@@ -163,8 +163,6 @@ cmd_restock() {
         *[1-9]*)     : ;;
         *)           die "$ERR_USAGE" "Error: quantity must be >= 1." ;;
     esac
-    item_id=$(( 10#$item_id ))   # base 10: "007" non e' ottale
-    qty=$(( 10#$qty ))
 
     # Il warehouse deve essere vivo e la sua FIFO presente (spec 2.2.8).
     warehouse_pid_if_alive >/dev/null || die "$ERR_WAREHOUSE_DOWN" "Error: warehouse not in execution. Launch ./bootstrap.sh"
