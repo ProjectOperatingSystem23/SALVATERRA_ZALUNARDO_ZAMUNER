@@ -1,102 +1,40 @@
 /* ============================================================================
- * warehouse.c  --  Processo "Warehouse" del Fulfillment Center (Project 2026-3)
+ * warehouse.c -- Warehouse process of the Fulfillment Center
  *
- * Uso:
+ * Usage:
  *   ./warehouse <num_receivers> <num_pickers> <num_packers>
  *               <queue_capacity> <inventory.csv>
  *
- * COSA FA (spec 2.1 / 2.2):
- *   E' il cuore del sistema. Carica l'inventario, apre le FIFO di IPC e avvia
- *   quattro tipi di thread che cooperano in pipeline su due bounded buffer:
- *
- *       order.sh --FIFO--> [Receiver]* --pending--> [Picker]* --packaging--> [Packer]* --> orders.log
- *       supplier --FIFO--> [Restock] -> inventario
- *
- *   - Receiver (producer): legge OrderRequest dalla ORDERS_FIFO, valida, accoda
- *     nella "pending orders queue".
- *   - Picker (consumer+producer): estrae da pending, dorme 1-3s (lavoro fisico),
- *     decrementa lo stock in modo atomico, accoda in "packaging queue".
- *   - Packer (consumer): estrae da packaging, dorme 1-3s, spedisce, scrive su
- *     orders.log e risponde al client sulla sua FIFO privata.
- *   - Restock (consumer): legge RestockMsg dalla RESTOCK_FIFO (supplier o
- *     manage.sh) e incrementa lo stock.
- *
- * ----------------------------------------------------------------------------
- * SCELTE DI PROGETTO (per la relazione), tutte basate sulle slide del corso:
- *
- *  [I/O CON FILE DESCRIPTOR - Lab05]  Tutto l'I/O (inventario, log, FIFO,
- *      risposte) usa le system call open/read/write/close, NON gli stream
- *      <stdio.h>. I file descriptor sono il livello giusto per l'IPC su FIFO
- *      (Lab06) e per avere controllo su atomicita' ed errori. printf/fprintf
- *      restano usati SOLO per i messaggi a video (stdout/stderr).
- *
- *  [SINCRONIZZAZIONE - Lab04]  Le due code sono bounded buffer protetti da
- *      mutex + 2 condition variable (not_full / not_empty), col pattern
- *      "while(condizione) pthread_cond_wait(...)" mostrato a lezione. Niente
- *      busy-waiting/spinlock (spec 2.2.5): i thread bloccati NON consumano CPU
- *      (pthread_cond_wait rilascia il mutex e mette il thread a dormire nel
- *      kernel finche' non viene segnalato).
- *      L'inventario e' protetto da un singolo mutex (spec 2.2.3): le sezioni
- *      critiche (trova item + incrementa/decrementa) sono brevissime, quindi
- *      la contesa e' trascurabile e il codice resta semplice da verificare.
- *
- *  [SEGNALI - Lab03 / Lab09]  I segnali (SIGTERM/SIGINT/SIGUSR1) vengono
- *      BLOCCATI nel main prima di creare i thread (sigprocmask): i worker
- *      ereditano la maschera e NON vengono interrotti; i segnali arrivano solo
- *      al thread main. Gli handler fanno solo "set di un flag" volatile
- *      sig_atomic_t (async-signal-safe). Il main aspetta i segnali con
- *      sigsuspend (Lab09: sblocca+dormi in modo atomico, niente race).
- *
- *  [SHUTDOWN DEL THREAD RESTOCK - sentinella su FIFO, Lab06]  I supplier
- *      sono processi longevi: allo shutdown potrebbero tenere ancora aperto il
- *      lato scrittura della RESTOCK_FIFO, e una read bloccante non vedrebbe
- *      mai EOF (la pthread_join si appenderebbe). Soluzione con i soli
- *      strumenti del corso: il main, prima di chiudere la sua write-end dummy,
- *      scrive sulla FIFO un messaggio SENTINELLA (supplier_id=RESTOCK_STOP_ID)
- *      che il thread riconosce come ordine di uscita immediata.
- *
- *  [NIENTE VARIABILI GLOBALI (tranne i 2 flag dei segnali)]  Inventario, code,
- *      file descriptor e mutex sono creati nel main e passati ai thread PER
- *      RIFERIMENTO dentro struct-argomento (pattern thread_arg_t del Lab04).
- *      Ogni thread riceve solo i riferimenti che gli servono. I 2 flag dei
- *      segnali devono pero' essere globali, perche' gli handler ricevono solo
- *      "int sig".
- *
- * Riferimenti: Lab03 (segnali), Lab04 (thread/mutex/condvar), Lab05 (fd/IO),
- *              Lab06 (FIFO), Lab09 (sigsuspend). man 7 pipe.
+ * Loads the inventory, opens the IPC FIFOs and runs four thread pools that
+ * cooperate over two bounded buffers:
+ *   order.sh --FIFO--> [Receiver]* --pending--> [Picker]* --packaging--> [Packer]* --> orders.log
+ *   supplier --FIFO--> [Restock] -> inventory
  * ============================================================================ */
 
-#include <stdio.h>      /* printf/fprintf/snprintf, perror     (Lab05 errori) */
-#include <stdlib.h>     /* malloc, free, atoi, exit                           */
-#include <string.h>     /* memset, memcpy, strerror                           */
-#include <unistd.h>     /* read, write, close, sleep, getpid   (Lab05)        */
-#include <fcntl.h>      /* open, O_RDONLY/O_WRONLY/O_CREAT..., fcntl (Lab05)  */
-#include <sys/stat.h>   /* mkfifo                              (Lab06)        */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/types.h>
-#include <pthread.h>    /* thread, mutex, condition variable   (Lab04)        */
-#include <signal.h>     /* sigaction, sigprocmask, sigsuspend  (Lab03/09)     */
-#include <errno.h>      /* errno                               (Lab05)        */
-#include <time.h>       /* time                                               */
-#include "common.h"     /* interfaccia binaria condivisa (struct + err code)  */
+#include <pthread.h>
+#include <signal.h>
+#include <errno.h>
+#include <time.h>
+#include "common.h"
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * Costanti interne
- * ═══════════════════════════════════════════════════════════════════════════ */
-#define MAX_INV_SIZE  1024   /* limite superiore sul numero di item nel CSV    */
-#define LINE_BUF       512   /* buffer per una riga di log / status            */
-#define RESTOCK_STOP_ID -1   /* supplier_id sentinella: inviato SOLO dal main  */
-                              /* sulla propria write-end dummy per far uscire il
-                              * thread restock allo shutdown. Un RestockMsg
-                              * esterno con id <= 0 e' comunque scartato come
-                              * non valido, quindi non e' falsificabile in modo
-                              * utile dall'esterno. */
+/* ====== Internal constants ================================================= */
+#define MAX_INV_SIZE  1024   /* upper bound on items in the CSV */
+#define LINE_BUF       512   /* one log / status line          */
+#define RESTOCK_STOP_ID -1   /* sentinel supplier_id: sent ONLY by main on its
+                              * dummy write-end to stop the restock thread */
 
 #define STATUS_FILE_TMP STATUS_FILE ".inprogress"
-/* ═══════════════════════════════════════════════════════════════════════════
- * Strutture dati INTERNE (non escono dal processo -> non stanno in common.h)
- * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Stato di un ordine lungo la pipeline (spec 2.2.2) */
+/* ====== Internal data structures (process-local: not in common.h) ========= */
+
+/* Order state along the pipeline */
 typedef enum {
     ORDER_RECEIVED,
     ORDER_PICKING,
@@ -105,7 +43,7 @@ typedef enum {
     ORDER_REJECTED
 } OrderStatus;
 
-/* Un item dell'inventario (spec 2.2.1) */
+/* One inventory item. */
 typedef struct {
     int  item_id;
     char description[MAX_DESC];
@@ -113,30 +51,24 @@ typedef struct {
     int  stock;
 } Item;
 
-/* L'inventario: array di item + mutex che ne protegge lo stock (spec 2.2.3).
- * Un solo mutex per tutto l'array: le sezioni critiche (trova+decrementa) sono
- * cortissime, quindi la contesa e' trascurabile e il codice resta semplice. */
+/* The inventory: item array + one mutex guarding the stock. */
 typedef struct {
-    Item             items[MAX_INV_SIZE]; /* array statico: no malloc, no free */
+    Item             items[MAX_INV_SIZE]; /* static array: no malloc/free */
     int              count;
     pthread_mutex_t  mutex;
 } Inventory;
 
-/* Un ordine "vivo" dentro il warehouse: incapsula la richiesta del client
- * (OrderRequest, da common.h) e aggiunge i campi di tracciamento interno. */
+/* A live order inside the warehouse: client request + internal tracking. */
 typedef struct {
-    OrderRequest request;   /* client_id, resp_fifo, item_id, quantity         */
-    int          order_id;  /* id progressivo interno                          */
+    OrderRequest request;
+    int          order_id;
     int          qty_shipped;
     int          qty_rejected;
-    int          error_code;/* ERR_OK / ERR_PARTIAL_FILL / ERR_OUT_OF_STOCK / ...   */
+    int          error_code;
     OrderStatus  status;
 } Order;
 
-/* Bounded buffer circolare protetto da mutex + 2 condition variable (Lab04).
- * not_full  : i producer (receiver/picker) ci aspettano quando la coda e' piena.
- * not_empty : i consumer (picker/packer)  ci aspettano quando la coda e' vuota.
- * shutdown  : alzato in chiusura per sbloccare TUTTI i thread in attesa.       */
+/* Circular bounded buffer: mutex + not_full/not_empty condvars + shutdown flag. */
 typedef struct {
     Order           *buffer;
     int              head, tail, count, capacity;
@@ -146,15 +78,13 @@ typedef struct {
     int              shutdown;
 } BoundedQueue;
 
-/* ---- Struct-argomento passate ai thread (pattern Lab04) -------------------- *
- * Vivono nello stack del main e restano valide fino alla join: passare un
- * puntatore ad esse e' sicuro. Ogni ruolo riceve SOLO i riferimenti che usa.   */
+/* ---- Thread-argument structs: references only, owned by main ------- */
 typedef struct {
-    int              orders_fd;          /* lato lettura della ORDERS_FIFO      */
-    pthread_mutex_t *orders_read_mutex;  /* serializza la read tra piu' receiver*/
+    int              orders_fd;          /* ORDERS_FIFO read-end*/
+    pthread_mutex_t *orders_read_mutex;  /* serialises the read across receivers */
     Inventory       *inv;
     BoundedQueue    *pending;
-    int             *next_order_id;      /* contatore condiviso degli order_id  */
+    int             *next_order_id;      /* shared order_id counter*/
     pthread_mutex_t *oid_mutex;
     int              log_fd;
     pthread_mutex_t *log_mutex;
@@ -175,69 +105,52 @@ typedef struct {
 } PackerArgs;
 
 typedef struct {
-    int        restock_fd;               /* lato lettura della RESTOCK_FIFO     */
+    int        restock_fd;               /* RESTOCK_FIFO read-end*/
     Inventory *inv;
 } RestockArgs;
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * UNICHE variabili globali: i flag dei segnali.
- *
- * volatile sig_atomic_t garantisce che lettura (nel main) e scrittura
- * (nell'handler) siano atomiche rispetto alla consegna del segnale e non
- * vengano riordinate/ottimizzate via dal compilatore (Lab03).
- * ═══════════════════════════════════════════════════════════════════════════ */
-static volatile sig_atomic_t shutdown_flag    = 0;   /* SIGTERM / SIGINT          */
-static volatile sig_atomic_t dump_status_flag = 0;   /* SIGUSR1                   */
+/* ====== Global variables ============================= */
+static volatile sig_atomic_t shutdown_flag    = 0;   /* SIGTERM / SIGINT */
+static volatile sig_atomic_t dump_status_flag = 0;   /* SIGUSR1          */
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * I/O di basso livello su file descriptor (Lab05)
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ====== fd I/O =========================================== */
 
-/* read "completa": ripete la read finche' non ha letto len byte.
- * Ritorna i byte letti (== len caso normale, < len se arriva EOF prima,
- * 0 se EOF immediato) oppure -1 su errore. Gestisce EINTR (Lab05).
- * NB sul buf "void *": e' il puntatore generico del C, cosi' la funzione
- * accetta qualunque tipo senza cast da parte del chiamante; il cast a char*
- * serve solo internamente per l'aritmetica byte per byte. */
+/* Full read with EINTR handling. Returns bytes read or -1 on error. */
 static ssize_t read_all(int fd, void *buf, size_t len)
 {
     size_t done = 0;
     while (done < len) {
         ssize_t n = read(fd, (char *)buf + done, len - done);
         if (n < 0) {
-            if (errno == EINTR) continue;   /* interrotta da segnale: riprova  */
+            if (errno == EINTR) continue;
             return -1;
         }
-        if (n == 0) break;                  /* EOF                             */
+        if (n == 0) break;
         done += (size_t)n;
     }
     return (ssize_t)done;
 }
 
-/* write_all(): definita in common.c (helper condiviso). */
-/* ═══════════════════════════════════════════════════════════════════════════
- * Inventario: caricamento da CSV via file descriptor + accesso sincronizzato
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ====== Inventory: CSV load via fd + synchronised access =================== */
 
-/* Estrae UN campo CSV dal cursore *pp. Gestisce sia campi "tra virgolette"
- * (es. "Wireless Mouse") sia campi semplici. Avanza *pp oltre il campo e la
- * virgola successiva. Scrive al massimo dst_size-1 byte e NUL-termina. */
-/*da scrivere megio magari: questa funzione MODIFICA *pp, perché il chiamante VUOLE scorrere fino al campo successivo*/
+/* Extract one comma-separated field from cursor *pp into dst,
+ * then advance *pp past the field and its comma. */
 static void csv_field(char **pp, char *dst, int dst_size)
 {
     char *p = *pp;
     int   i = 0;
-    while (*p && *p != ',' && *p != '\n' && *p != '\r') /*la condizione *p da sola è il controllo per \0, \0 equivale a 0 per i char, qualsiasi altro carattere ('0' incluso)*/
+    while (*p && *p != ',' && *p != '\n' && *p != '\r')
     {
         if (i < dst_size-1)
             dst[i++] = *p;
         p++;
     }
     dst[i] = '\0';
-    if (*p == ',') p++;              /* salta il separatore, non avanziamo se \n o \r, perche leggiamo riga per riga con read_line_from_fd*/
+    if (*p == ',') p++;              /* skip separator; stop at \n or \r  */
     *pp = p;
 }
 
+/* Load the inventory CSV. */
 static int inventory_load(Inventory *inv, const char *path)
 {
     int fd = open(path, O_RDONLY);
@@ -248,7 +161,7 @@ static int inventory_load(Inventory *inv, const char *path)
     }
 
     char line[512];
-    /* salta l'header */
+    /* skip header */
     if (read_line_from_fd(fd, line, sizeof(line)) <= 0) {
         fprintf(stderr, "[WAREHOUSE] inventory '%s' empty\n", path);
         close(fd);
@@ -269,14 +182,14 @@ static int inventory_load(Inventory *inv, const char *path)
 
         csv_field(&p, tmp, sizeof(tmp));
         it->item_id = atoi(tmp);
-        if (it->item_id <= 0) continue;          /* riga malformata */
+        if (it->item_id <= 0) continue;          /* malformed row */
 
         csv_field(&p, it->description, sizeof(it->description));
         csv_field(&p, it->category,    sizeof(it->category));
 
         csv_field(&p, tmp, sizeof(tmp));
         it->stock = atoi(tmp);
-        if (it->stock < 0) it->stock = 0;        /* difensivo: mai stock < 0 */
+        if (it->stock < 0) it->stock = 0;        /* defensive: never stock < 0 */
 
         inv->count++;
     }
@@ -290,7 +203,7 @@ static int inventory_load(Inventory *inv, const char *path)
     return ERR_OK;
 }
 
-/* Trova l'item per id. Il chiamante DEVE gia' tenere inv->mutex. */
+/* Find item by id. Caller MUST already hold inv->mutex. */
 static Item *inventory_find_locked(Inventory *inv, int item_id)
 {
     for (int i = 0; i < inv->count; i++)
@@ -299,12 +212,8 @@ static Item *inventory_find_locked(Inventory *inv, int item_id)
     return NULL;
 }
 
-/* Decremento ATOMICO dello stock (chiamato dal picker mentre tiene inv->mutex).
- * Ritorna le unita' effettivamente spedite (0..qty) e imposta *err.
- * E' QUI che si risolve la race "ultime unita' ordinate insieme" (spec 2.2.10):
- * essendo tutto dentro inv->mutex, due picker non possono entrambi spedire
- * la stessa unita'. Il check "stock <= 0" copre il caso in cui un altro picker
- * abbia esaurito l'item tra la validazione del receiver e questo momento. */
+/* Atomic stock decrement (caller holds inv->mutex). Returns units shipped
+ * and sets *err. */
 static int inventory_decrement_locked(Inventory *inv, int item_id, int qty,
                                       int *err)
 {
@@ -312,16 +221,14 @@ static int inventory_decrement_locked(Inventory *inv, int item_id, int qty,
     if (!it)            { *err = ERR_ITEM_NOT_FOUND; return 0; }
     if (it->stock <= 0) { *err = ERR_OUT_OF_STOCK;   return 0; }
 
-    int ship = (it->stock >= qty) ? qty : it->stock;  /* riempimento parziale  */
+    int ship = (it->stock >= qty) ? qty : it->stock;  /* partial fill */
     it->stock -= ship;
     *err = (ship < qty) ? ERR_PARTIAL_FILL : ERR_OK;
     return ship;
 }
 
-/* Incremento dello stock (chiamato dal thread restock). Prende lui il lock.
- * NB: pthread_mutex_lock NON e' uno spinlock: se il mutex e' occupato il
- * thread viene messo a dormire dal kernel (futex), zero CPU consumata.
- * Ritorna il nuovo stock, o -1 se l'item non esiste. */
+/* Stock increment, grabs inv->mutex itself. Returns new stock, or -1 if the
+ * item does not exist. */
 static int inventory_increment(Inventory *inv, int item_id, int qty)
 {
     int newstock = -1;
@@ -332,9 +239,7 @@ static int inventory_increment(Inventory *inv, int item_id, int qty)
     return newstock;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * Bounded buffer (Lab04: mutex + condition variable)
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ====== Bounded buffer ================ */
 static int bq_init(BoundedQueue *q, int capacity)
 {
     q->buffer = malloc((size_t)capacity * sizeof(Order));
@@ -369,49 +274,36 @@ static void bq_destroy(BoundedQueue *q)
     free(q->buffer);
 }
 
-/* Inserisce un ordine. BLOCCA (senza consumare CPU) se la coda e' piena, finche'
- * un consumer libera spazio (spec 2.2.5). Ritorna 0, oppure -1 se la coda e' in
- * shutdown ED e' piena (rinuncia: serve a non restare bloccati per sempre).
- * NB: con la sequenza di shutdown del main (vedi sotto) i producer vengono
- * joinati PRIMA di alzare lo shutdown sulla loro coda di uscita, quindi il
- * ramo -1 e' solo difensivo: nessun ordine in volo viene davvero scartato. */
+/* Insert an order; blocks while full. Returns 0, or -1 if the queue is
+ * in shutdown AND full. The while-loop guards against spurious wakeups. */
 static int bq_produce(BoundedQueue *q, const Order *o)
 {
-    /*Una sveglia spuria è quando pthread_cond_wait ritorna senza un vero motivo
-     *(nessun signal/broadcast reale) — il while invece di if protegge da questo,
-     *perché ricontrolla sempre la condizione vera prima di procedere, invece di
-     *fidarsi ciecamente del fatto di essersi svegliato.*/
     pthread_mutex_lock(&q->mutex);
-    while (q->count == q->capacity && !q->shutdown)        /* pattern Lab04     */
+    while (q->count == q->capacity && !q->shutdown)
         pthread_cond_wait(&q->not_full, &q->mutex);
-    if (q->count == q->capacity && q->shutdown) {/* pieno e in chiusura */
-        pthread_cond_signal(&q->not_full);   /* risveglio a catena (vedi bq_consume) */
+    if (q->count == q->capacity && q->shutdown) {
+        pthread_cond_signal(&q->not_full);   /* chained wake (see bq_consume) */
         pthread_mutex_unlock(&q->mutex);
         return -1;
     }
     q->buffer[q->tail] = *o;
     q->tail = (q->tail + 1) % q->capacity;
     q->count++;
-    pthread_cond_signal(&q->not_empty);                    /* sveglia un consumer */
+    pthread_cond_signal(&q->not_empty);      /* wake one consumer */
     pthread_mutex_unlock(&q->mutex);
     return 0;
 }
 
-/* Estrae un ordine. BLOCCA (senza CPU) se la coda e' vuota. Ritorna 0, oppure
- * -1 se la coda e' vuota E in shutdown: e' il segnale per il thread di uscire.
- * NB: se in shutdown ma ci sono ancora elementi, ogni chiamata ne estrae uno:
- * i consumer continuano a ciclare finche' la coda non e' DAVVERO vuota, quindi
- * gli ordini "in volo" vengono completati prima della chiusura (spec 2.2.10). */
+/* Remove an order; blocks while empty. Returns 0, or -1 if empty AND in
+ * shutdown. In-flight orders are drained first. */
 static int bq_consume(BoundedQueue *q, Order *out)
 {
     pthread_mutex_lock(&q->mutex);
     while (q->count == 0 && !q->shutdown)
         pthread_cond_wait(&q->not_empty, &q->mutex);
-    if (q->count == 0) {                                   /* vuota + shutdown  */
-        /* RISVEGLIO A CATENA: prima di uscire risveglio il prossimo consumer
-         * in attesa, che a sua volta vedra' vuota+shutdown, risegnalera' e
-         * uscira'. Cosi' basta UNA pthread_cond_signal in bq_shutdown per
-         * svegliare tutti, senza bisogno di broadcast (Lab04 usa signal). */
+    if (q->count == 0) {
+        /* Chained wake: wake the next waiter, which re-checks empty+shutdown and
+         * re-signals. One signal in bq_shutdown thus wakes everyone. */
         pthread_cond_signal(&q->not_empty);
         pthread_mutex_unlock(&q->mutex);
         return -1;
@@ -419,12 +311,12 @@ static int bq_consume(BoundedQueue *q, Order *out)
     *out = q->buffer[q->head];
     q->head = (q->head + 1) % q->capacity;
     q->count--;
-    pthread_cond_signal(&q->not_full);                     /* sveglia un producer */
+    pthread_cond_signal(&q->not_full);       /* wake one producer */
     pthread_mutex_unlock(&q->mutex);
     return 0;
 }
 
-/* Alza shutdown e sveglia TUTTI i thread bloccati sulle due condvar. */
+/* Raise shutdown and wake all threads waiting on either condvar. */
 static void bq_shutdown(BoundedQueue *q)
 {
     pthread_mutex_lock(&q->mutex);
@@ -434,7 +326,7 @@ static void bq_shutdown(BoundedQueue *q)
     pthread_mutex_unlock(&q->mutex);
 }
 
-/* Numero di elementi correnti (lettura sincronizzata, per lo status dump). */
+/* Current element count, synchronised for the status dump. */
 static int bq_size(BoundedQueue *q)
 {
     pthread_mutex_lock(&q->mutex);
@@ -443,13 +335,11 @@ static int bq_size(BoundedQueue *q)
     return c;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * Logging su orders.log via file descriptor (Lab05)
- *
- * Formato (pipe-separated, facile da analizzare con grep/awk/wc in manage.sh):
+/* ====== Logging to orders.log via fd ==============================
+ * Format (pipe-separated):
  *   timestamp|order_id|client_id|item_id|qty_req|qty_shipped|qty_rejected|STATUS
- * STATUS in { SHIPPED, PARTIAL, REJECTED }.
- * ═══════════════════════════════════════════════════════════════════════════ */
+ *   STATUS in { SHIPPED, PARTIAL, REJECTED }
+ * ========================================================================== */
 static void log_order(int log_fd, pthread_mutex_t *log_mutex, const Order *o)
 {
     char tbuf[32];
@@ -466,28 +356,18 @@ static void log_order(int log_fd, pthread_mutex_t *log_mutex, const Order *o)
                      o->request.quantity, o->qty_shipped, o->qty_rejected, st);
     if (n <= 0) return;
 
-    /* O_APPEND already makes a single write atomic; the mutex documents intent
-     * and removes any dependency on filesystem behaviour. */
     pthread_mutex_lock(log_mutex);
     ssize_t w = write_all(log_fd, line, (size_t)n);
-    int e = errno;                       /* capture before unlock can clobber it */
+    int e = errno;
     pthread_mutex_unlock(log_mutex);
-    if (w < 0)                           /* spec 2.2.9: log writes must be checked */
+    if (w < 0)                           /*log writes must be checked */
         fprintf(stderr, "[WAREHOUSE] write to %s failed: %s\n", LOG_FILE, strerror(e));
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * Risposta al client sulla sua FIFO privata (Lab06: 2 FIFO = bidirezionale)
- *
- * Il PROTOCOLLO del client (order_helper.c) garantisce che il lato lettura
- * della resp_fifo venga aperto PRIMA di inviare la richiesta: quindi, se il
- * client e' vivo, la open qui sotto riesce subito. La apriamo con O_NONBLOCK
- * per NON bloccarci se il client e' morto nel frattempo (in quel caso open
- * fallisce con ENXIO "no reader" o ENOENT "fifo rimossa"): senza O_NONBLOCK
- * un packer resterebbe appeso per sempre su un client defunto.
- * La risposta resta in formato BINARIO (OrderResponse): e' order_helper a
- * tradurla in output human-readable per l'utente.
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ====== Reply to the client on its private FIFO  ====================
+ * Opened O_WRONLY|O_NONBLOCK so a dead client (ENXIO) cannot hang a packer.
+ * The reply stays binary (OrderResponse); order_helper displays it for the user.
+ * ========================================================================== */
 static void send_response(const char *resp_fifo, const OrderResponse *resp)
 {
     if (resp_fifo == NULL || resp_fifo[0] == '\0') return;
@@ -503,33 +383,19 @@ static void send_response(const char *resp_fifo, const OrderResponse *resp)
     close(fd);
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * Utility varie
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ====== Misc ============================================================== */
 
-/* Dorme un tempo casuale 1-3 s per simulare il lavoro fisico (spec 2.2.7).
- * srand() viene chiamato una volta sola nel main. */
+/* Sleep a random 1-3 s to simulate physical work(spec 2.2.7). */
 static void rand_sleep_1_3(void)
 {
-    sleep(1 + rand() % 3);    /* uniforme in {1,2,3} secondi */
+    sleep(1 + rand() % 3);
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * Gestione segnali (Lab03)  --  gli handler fanno SOLO set di flag
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ====== Signal handlers (Lab03): set a flag only ========================== */
 static void handle_shutdown(int sig) { (void)sig; shutdown_flag    = 1; }
 static void handle_status_dump    (int sig) { (void)sig; dump_status_flag = 1; }
 
-/* setup_handler(): definita in common.c (helper condiviso). */
-
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * Dump dello stato su STATUS_FILE (per manage.sh status)
- *
- * Chiamato dal MAIN (non dall'handler!) quando dump_status_flag e' alzato: cosi'
- * possiamo usare lock e write() in tutta sicurezza (un signal handler non
- * potrebbe, perche' quelle funzioni non sono async-signal-safe). Lab05 fd.
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ====== Status dump to STATUS_FILE (for "manage.sh status") ================*/
 static void write_status_file(Inventory *inv, BoundedQueue *pending,
                            BoundedQueue *packaging, int n_rec, int n_pick, int n_pack)
 {
@@ -554,8 +420,7 @@ static void write_status_file(Inventory *inv, BoundedQueue *pending,
                  bq_size(packaging), packaging->capacity);
     if (n > 0) write_all(fd, buf, (size_t)n);
 
-    /* Copia dell'inventario sotto lock, poi scrittura FUORI dal lock: cosi'
-     * teniamo inv->mutex solo per la memcpy e non durante le write(). */
+    /* Snapshot the inventory under lock, then write outside the lock. */
     pthread_mutex_lock(&inv->mutex);
     int   count = inv->count;
     Item *snap  = malloc((size_t)count * sizeof(Item));
@@ -575,27 +440,24 @@ static void write_status_file(Inventory *inv, BoundedQueue *pending,
     }
     close(fd);
 
-    /* rename ATOMICO: da qui STATUS_FILE e' il dump completo (sostituisce in un
-     * colpo solo l'eventuale versione precedente). */
+    /* Atomic rename: STATUS_FILE becomes the complete dump in one step. */
     if (rename(STATUS_FILE_TMP, STATUS_FILE) != 0) {
         fprintf(stderr, "[WAREHOUSE] rename status '%s' -> '%s': %s\n",
                 STATUS_FILE_TMP, STATUS_FILE, strerror(errno));
-        unlink(STATUS_FILE_TMP);   /* non lasciare il temp orfano */
+        unlink(STATUS_FILE_TMP);
     }
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * THREAD: Order Receiver (producer)  --  spec 2.2.4
- *
- * Piu' receiver leggono dalla STESSA FIFO: un mutex sulla read garantisce che
- * ciascuno prenda esattamente UN OrderRequest completo (Lab04 mutex + Lab06).
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ====== THREAD: Order Receiver (producer) ====================
+ * Many receivers read the SAME FIFO; a mutex on the read gives each exactly one
+ * full OrderRequest (writes are atomic, < PIPE_BUF).
+ * ========================================================================== */
 static void log_rejection(int log_fd, pthread_mutex_t *log_mutex,
                           const OrderRequest *req, int oid, int err)
 {
     Order o;
     memset(&o, 0, sizeof(o));
-    o.request      = *req;
+    o.request = *req;
     o.order_id     = oid;
     o.status       = ORDER_REJECTED;
     o.error_code   = err;
@@ -609,56 +471,49 @@ static void *receiver_thread(void *arg)
 
     while (!shutdown_flag) {
         OrderRequest req;
-        /* read mutuamente esclusiva: un solo receiver alla volta legge la FIFO.
-         * Le write dei client sono atomiche (< PIPE_BUF), quindi nella FIFO ci
-         * sono sempre messaggi interi: serializzare le read garantisce che ogni
-         * receiver estragga esattamente un messaggio. */
+        /* One receiver reads one whole message at a time. */
         pthread_mutex_lock(a->orders_read_mutex);
         ssize_t n = read_all(a->orders_fd, &req, sizeof(req));
         pthread_mutex_unlock(a->orders_read_mutex);
 
-        if (n == 0) break;                       /* EOF: write-end dummy chiusa */
-        if (n != (ssize_t)sizeof(req)) {         /* errore / messaggio troncato */
-            if (n < 0) perror("[RECEIVER] read");/* EINTR gia' gestito in read_all */
+        if (n == 0) break;                       /* EOF: dummy write-end closed */
+        if (n != (ssize_t)sizeof(req)) {         /* error / truncated message   */
+            if (n < 0) perror("[RECEIVER] read");
             if (shutdown_flag) break;
             continue;
         }
-        /*siccome abbiamo letto da una fifo info da un processo esterno, per principio mettiamo il terminatore*/
+        /* Terminate strings coming from an external process. */
         req.client_id[MAX_CLIENT_ID - 1] = '\0';
         req.resp_fifo[MAX_RESP_FIFO - 1] = '\0';
-        /* order_id progressivo: contatore condiviso protetto da mutex */
         pthread_mutex_lock(a->oid_mutex);
         int order_id = (*a->next_order_id)++;
         pthread_mutex_unlock(a->oid_mutex);
 
         OrderResponse resp;
         memset(&resp, 0, sizeof(resp));
-        resp.item_id       = req.item_id;
+        resp.item_id = req.item_id;
         resp.qty_requested = req.quantity;
 
-        /* --- Validazioni (spec 2.2.4 / 2.2.10) --- */
-        if (req.quantity <= 0) {                                /* qty 0 o < 0 */
+        /* --- Validation (spec 2.2.4 / 2.2.10) --- */
+        if (req.quantity <= 0) {
             resp.status = ERR_INVALID_QTY; resp.qty_rejected = req.quantity;
             send_response(req.resp_fifo, &resp);
             log_rejection(a->log_fd, a->log_mutex, &req, order_id, ERR_INVALID_QTY);
             continue;
         }
-        if (req.item_id <= 0) {                  /* id non valido per contratto */
+        if (req.item_id <= 0) {
             resp.status = ERR_ITEM_NOT_FOUND; resp.qty_rejected = req.quantity;
             send_response(req.resp_fifo, &resp);
             log_rejection(a->log_fd, a->log_mutex, &req, order_id, ERR_ITEM_NOT_FOUND);
             continue;
         }
 
-        /* Peek esistenza/stock sotto lock: e' la validazione "leggera" che la
-         * spec assegna ai receiver ("check that the item exists and is in
-         * stock"). Il controllo DEFINITIVO sullo stock resta nel picker
-         * (inventory_decrement_locked): tra questo peek e il pick lo stock
-         * puo' cambiare, ed e' li' che la race viene davvero risolta. */
+        /* stock peek; the definitive stock check is in the
+         * picker, where the race is resolved. */
         pthread_mutex_lock(&a->inv->mutex);
-        Item *it       = inventory_find_locked(a->inv, req.item_id);
-        int   exists   = (it != NULL);
-        int   in_stock = exists && it->stock > 0;
+        Item *it = inventory_find_locked(a->inv, req.item_id);
+        int exists = (it != NULL);
+        int in_stock = exists && it->stock > 0;
         pthread_mutex_unlock(&a->inv->mutex);
 
         if (!exists) {
@@ -667,40 +522,37 @@ static void *receiver_thread(void *arg)
             log_rejection(a->log_fd, a->log_mutex, &req, order_id, ERR_ITEM_NOT_FOUND);
             continue;
         }
-        if (!in_stock) {                /* out of stock: rifiuto immediato (spec 2.2.2) */
+        if (!in_stock) {
             resp.status = ERR_OUT_OF_STOCK; resp.qty_rejected = req.quantity;
             send_response(req.resp_fifo, &resp);
             log_rejection(a->log_fd, a->log_mutex, &req, order_id, ERR_OUT_OF_STOCK);
             continue;
         }
 
-        /* --- Accoda nella pending queue (puo' bloccare se piena: spec 2.2.5) --- */
         Order o;
         memset(&o, 0, sizeof(o));
         o.request  = req;
         o.order_id = order_id;
         o.status   = ORDER_RECEIVED;
-        if (bq_produce(a->pending, &o) != 0) break;   /* solo se coda in shutdown  */
+        if (bq_produce(a->pending, &o) != 0) break;   /* only if queue in shutdown */
     }
     return NULL;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * THREAD: Picker Robot (consumer di pending, producer di packaging) - spec 2.2.4
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ====== THREAD: Picker (consumes pending, produces packaging) == */
 static void *picker_thread(void *arg)
 {
     PickerArgs *a = (PickerArgs *)arg;
 
     for (;;) {
         Order o;
-        if (bq_consume(a->pending, &o) != 0) break;       /* vuota + shutdown -> esci */
+        if (bq_consume(a->pending, &o) != 0) break;       /* empty + shutdown -> exit */
 
         o.status = ORDER_PICKING;
 
-        rand_sleep_1_3();                             /* tempo di prelievo (spec) */
+        rand_sleep_1_3();                             /* pick time */
 
-        /* Decremento atomico dello stock sotto inv->mutex */
+        /* Atomic stock decrement under inv->mutex. */
         int err;
         pthread_mutex_lock(&a->inv->mutex);
         int shipped = inventory_decrement_locked(a->inv, o.request.item_id,
@@ -711,7 +563,7 @@ static void *picker_thread(void *arg)
         o.qty_rejected = o.request.quantity - shipped;
         o.error_code   = err;
 
-        if (shipped == 0) {        /* item esaurito tra validazione e pick */
+        if (shipped == 0) {        /* ran out of item between validation and pick */
             o.status = ORDER_REJECTED;
             OrderResponse resp = { err, o.request.item_id, o.request.quantity,
                                    0, o.request.quantity };
@@ -720,16 +572,14 @@ static void *picker_thread(void *arg)
             continue;
         }
 
-        /* Inoltra al packaging (anche se parziale: la parte disponibile va spedita) */
+        /* Forward to packaging. */
         o.status = ORDER_PACKING;
-        if (bq_produce(a->packaging, &o) != 0) break;    /* solo se coda in shutdown */
+        if (bq_produce(a->packaging, &o) != 0) break;    /* only if queue in shutdown */
     }
     return NULL;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * THREAD: Packer (consumer di packaging) - spec 2.2.4
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ====== THREAD: Packer (consumes packaging) ================== */
 static void *packer_thread(void *arg)
 {
     PackerArgs *a = (PackerArgs *)arg;
@@ -738,7 +588,7 @@ static void *packer_thread(void *arg)
         Order o;
         if (bq_consume(a->packaging, &o) != 0) break;
 
-        rand_sleep_1_3();                             /* tempo di imballaggio */
+        rand_sleep_1_3();                             /* packing time */
 
         o.status = ORDER_SHIPPED;
         int status = (o.error_code == ERR_PARTIAL_FILL) ? ERR_PARTIAL_FILL : ERR_OK;
@@ -750,22 +600,11 @@ static void *packer_thread(void *arg)
     return NULL;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * THREAD: Restock listener (consumer della RESTOCK_FIFO) - spec 2.2.6
- *
- *
- * Gira CONCORRENTEMENTE all'elaborazione ordini: usa lo stesso inv->mutex dei
- * picker, quindi increment e decrement non si pestano i piedi (spec 2.2.7).
- *
- * A differenza dei receiver, qui i writer (supplier) sono processi LONGEVI:
- * allo shutdown potrebbero tenere ancora aperto il lato scrittura della FIFO,
- * e una read bloccante non vedrebbe mai EOF (il warehouse si appenderebbe in
- * pthread_join). Per questo il thread esce anche quando legge il messaggio
- * SENTINELLA (supplier_id == RESTOCK_STOP_ID) che il main scrive sulla
- * propria write-end dummy allo shutdown: solo read/write su FIFO (Lab06).
- * Un supplier crashato/killato (spec 2.2.10) non blocca nulla: semplicemente
- * smette di mandare messaggi, e la read resta in attesa degli altri writer.
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ====== THREAD: Restock listener (consumes RESTOCK_FIFO) =====
+ * Runs concurrently with order processing (shares inv->mutex with pickers).
+ * Suppliers are long-lived, so EOF may never come at shutdown: the thread also
+ * exits on the sentinel (supplier_id == RESTOCK_STOP_ID) written by main.
+ * ========================================================================== */
 static void *restock_thread(void *arg)
 {
     RestockArgs *a = (RestockArgs *)arg;
@@ -774,15 +613,14 @@ static void *restock_thread(void *arg)
         RestockMsg msg;
         ssize_t n = read_all(a->restock_fd, &msg, sizeof(msg));
 
-        if (n == 0) break;                          /* EOF: nessun writer       */
+        if (n == 0) break;                          /* EOF: no writer */
         if (n != (ssize_t)sizeof(msg)) {
-            if (n < 0) perror("[RESTOCK] read");    /* EINTR gestito in read_all */
+            if (n < 0) perror("[RESTOCK] read");
             if (shutdown_flag) break;
             continue;
         }
-        /*SIAMO SICURI CHE IL -1 NON SIA INVIATO DA UN SUPPLIER MALEVOLO PERCHÉ IL C HELPER FA CONTROLLO INPUT DEL BASH SCRIPT*/
-        if (msg.supplier_id == RESTOCK_STOP_ID)     /* sentinella dal main:     */
-            break;                                  /* shutdown, esci subito    */
+        if (msg.supplier_id == RESTOCK_STOP_ID)     /* sentinel from main */
+            break;
         if (msg.item_id <= 0 || msg.quantity <= 0) {
             fprintf(stderr, "[RESTOCK] invalid message (item=%d qty=%d)\n",
                     msg.item_id, msg.quantity);
@@ -796,30 +634,10 @@ static void *restock_thread(void *arg)
     return NULL;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * Apertura di una FIFO in lettura + write-end "dummy" (Lab06)
- * Trucco standard: teniamo SEMPRE aperta una write-end nostra, cosi' la read()
- * dei thread non vede mai EOF mentre il sistema e' attivo (altrimenti, appena
- * l'ultimo client chiude, read() tornerebbe 0). In chiusura, il main chiude la
- * write-end dummy: a quel punto read() ritorna 0 (EOF) e il thread esce pulito.
- *
- * Sequenza delle open:
- *   1. read-end con O_NONBLOCK: senza, open(O_RDONLY) bloccherebbe finche'
- *      non esiste un writer (Lab06) -- ma il writer siamo noi al passo 2.
- *   2. write-end SENZA O_NONBLOCK: non serve, il lato lettura e' gia' aperto
- *      (siamo noi), quindi la open non puo' bloccare.
- *   3. fcntl per togliere O_NONBLOCK dal read-end: d'ora in poi le read dei
- *      thread sono BLOCCANTI (i thread dormono, niente busy-wait, spec 2.2.5).
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-/* open_fifo_r_dw(): definita in common.c (helper condiviso, vedi common.h). */
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * MAIN
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ====== MAIN ============================================================== */
 int main(int argc, char *argv[])
 {
-    /* ---- parsing + validazione argomenti (spec 2.3) ---- */
+    /* ---- argument parsing + validation ---- */
     if (argc != 6) {
         fprintf(stderr, "Usage: %s <num_receivers> <num_pickers> <num_packers>"
                         " <queue_capacity> <inventory.csv>\n", argv[0]);
@@ -838,7 +656,7 @@ int main(int argc, char *argv[])
     }
     srand((unsigned)time(NULL) ^ (unsigned)getpid());
 
-    /* ---- inventario (Lab05 fd + Lab04 mutex) ---- */
+    /* ---- inventory ---- */
     Inventory inv;
     if (pthread_mutex_init(&inv.mutex, NULL) != 0) {
         fprintf(stderr, "[WAREHOUSE] inventory mutex init failed.\n");
@@ -847,7 +665,7 @@ int main(int argc, char *argv[])
     if (inventory_load(&inv, inv_path) != ERR_OK)
         return EXIT_FAILURE;
 
-    /* ---- log: open in append (Lab05) ---- */
+    /* ---- log file---- */
     int log_fd = open(LOG_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (log_fd < 0) {
         fprintf(stderr, "[WAREHOUSE] open log '%s': %s\n", LOG_FILE, strerror(errno));
@@ -859,7 +677,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    /* ---- code bounded (Lab04) ---- */
+    /* ---- bounded queues ---- */
     BoundedQueue pending, packaging;
     if (bq_init(&pending, queue_cap) != ERR_OK ||
         bq_init(&packaging, queue_cap) != ERR_OK) {
@@ -867,7 +685,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    /* ---- FIFO (Lab06) ---- */
+    /* ---- FIFOs ---- */
     int orders_fd, orders_dummy_fd, restock_fd, restock_dummy_fd;
     if (open_fifo_r_dw(ORDERS_FIFO,  0666, &orders_fd,  &orders_dummy_fd)  != 0) {
         fprintf(stderr, "[WAREHOUSE] init FIFO '%s': %s\n", ORDERS_FIFO, strerror(errno));
@@ -883,7 +701,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    /* ---- contatore order_id condiviso ---- */
+    /* ---- shared order_id counter ---- */
     int next_order_id = 1;
     pthread_mutex_t order_id_mutex;
     if (pthread_mutex_init(&order_id_mutex, NULL) != 0) {
@@ -891,34 +709,29 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    /* ---- segnali (Lab03/09) ----
-     * Blocchiamo i segnali ORA, mentre il processo e' ancora a thread singolo:
-     * la maschera viene EREDITATA dai thread creati dopo, che quindi non li
-     * riceveranno. (sigprocmask e' ben definito perche' siamo single-thread;
-     * pthread_sigmask sarebbe l'equivalente a thread gia' avviati.) */
+    /* ---- signals: block now (single-thread) so threads inherit
+     * the mask and never receive them; main waits via sigsuspend. ---- */
     sigset_t block_set, empty_set;
     sigemptyset(&block_set);
     sigaddset(&block_set, SIGTERM);
     sigaddset(&block_set, SIGINT);
     sigaddset(&block_set, SIGUSR1);
     sigprocmask(SIG_BLOCK, &block_set, NULL);
-    sigemptyset(&empty_set);               /* maschera vuota per sigsuspend */
+    sigemptyset(&empty_set);               /* empty mask for sigsuspend */
 
-    setup_handler(SIGTERM, handle_shutdown);  /* handler: solo set di flag */
+    setup_handler(SIGTERM, handle_shutdown);
     setup_handler(SIGINT,  handle_shutdown);
     setup_handler(SIGUSR1, handle_status_dump);
-    /* SIGPIPE ignorato: se un client chiude la sua resp_fifo, la write deve
-     * fallire con EPIPE (gestito), NON terminare il warehouse. */
-    setup_handler(SIGPIPE, SIG_IGN);
+    setup_handler(SIGPIPE, SIG_IGN);       /* dead client -> EPIPE, not death */
 
-    /* ---- struct-argomento (riferimenti, niente globali: Lab04) ---- */
+    /* ---- thread-argument structs ---- */
     ReceiverArgs receiver_args = { orders_fd, &orders_read_mutex, &inv, &pending,
                         &next_order_id, &order_id_mutex, log_fd, &log_mutex };
     PickerArgs   picker_args = { &inv, &pending, &packaging, log_fd, &log_mutex };
     PackerArgs   packer_args = { &packaging, log_fd, &log_mutex };
     RestockArgs  restock_args = { restock_fd, &inv };
 
-    /* ---- spawn dei thread pool (Lab04) ---- */
+    /* ---- spawn the thread pools ---- */
     pthread_t *recv_th = malloc((size_t)num_receivers * sizeof(pthread_t));
     pthread_t *pick_th = malloc((size_t)num_pickers   * sizeof(pthread_t));
     pthread_t *pack_th = malloc((size_t)num_packers   * sizeof(pthread_t));
@@ -948,9 +761,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    /* ---- loop principale: aspetta i segnali (Lab09 sigsuspend, race-free) ----
-     * sigsuspend sblocca atomicamente i segnali e dorme finche' ne arriva uno;
-     * al ritorno la maschera (bloccante) e' ripristinata. Niente busy-wait. */
+    /* ---- main loop: wait for signals ---- */
     while (!shutdown_flag) {
         sigsuspend(&empty_set);
         if (dump_status_flag) {
@@ -960,24 +771,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* ---- shutdown ORDINATO (spec 2.2.10: completa gli ordini in volo) ----
-     * Sequenza pensata per NON perdere ordini gia' entrati nella pipeline:
-     *   1. scrivo la SENTINELLA sulla RESTOCK_FIFO e chiudo le write-end
-     *      dummy -> i receiver vedono EOF appena la FIFO si svuota; il thread
-     *      restock esce appena legge la sentinella (anche se qualche supplier
-     *      tiene ancora aperto il lato scrittura)
-     *   2. join di receiver e restock  -> da qui NESSUN nuovo push su pending
-     *      (i receiver bloccati in bq_produce vengono comunque serviti dai picker,
-     *      che sono ancora tutti attivi: nessun deadlock)
-     *   3. SOLO ORA shutdown della pending -> i picker drenano cio' che resta
-     *      e poi escono (vuota+shutdown)
-     *   4. join dei picker             -> da qui nessun nuovo push su packaging
-     *   5. shutdown della packaging    -> i packer drenano e poi escono
-     *   6. join dei packer
-     * L'ordine inverso (shutdown della pending PRIMA della join dei receiver)
-     * sarebbe sbagliato: tutti i picker potrebbero uscire (coda vuota+shutdown)
-     * mentre un receiver sta ancora accodando un ordine, che resterebbe
-     * orfano e il suo client appeso fino al timeout. */
+    /* ---- ordered shutdown  ----*/
 
     RestockMsg stop_msg = { RESTOCK_STOP_ID, 0, 0 };
     if (write_all(restock_dummy_fd, &stop_msg, sizeof(stop_msg)) < 0)
@@ -1002,13 +796,10 @@ int main(int argc, char *argv[])
         if (pthread_join(pack_th[i], NULL) != 0)
             fprintf(stderr, "[WAREHOUSE] pthread_join (packer) failed.\n");
 
-    /* ---- cleanup risorse + IPC (spec 2.2.8: clean up FIFO/IPC) ---- */
+    /* ---- cleanup resources ---- */
     close(orders_fd);
     close(restock_fd);
     close(log_fd);
-    /*UNLINK: = system call dietro rm, rimuove il nome non l 'oggetto,
-     *se c'è qualche altro processo
-     *con collegamento l'iNode rimane vivo*/
     unlink(ORDERS_FIFO);
     unlink(RESTOCK_FIFO);
     unlink(STATUS_FILE);
