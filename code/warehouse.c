@@ -454,7 +454,7 @@ static void log_order(int log_fd, pthread_mutex_t *log_mutex, const Order *o)
 {
     char tbuf[32];
     time_t now = time(NULL);
-    snprintf(tbuf, sizeof(tbuf), "%ld", (long)now);  /* unix timestamp grezzo */
+    snprintf(tbuf, sizeof(tbuf), "%ld", (long)now);
 
     const char *st = "SHIPPED";
     if      (o->status == ORDER_REJECTED)  st = "REJECTED";
@@ -466,12 +466,14 @@ static void log_order(int log_fd, pthread_mutex_t *log_mutex, const Order *o)
                      o->request.quantity, o->qty_shipped, o->qty_rejected, st);
     if (n <= 0) return;
 
-    /* Il file e' aperto in O_APPEND, quindi una singola write e' gia' atomica;
-     * teniamo comunque un mutex (Lab04) per non dipendere dal comportamento
-     * di filesystem particolari e per documentare l'intento. */
+    /* O_APPEND already makes a single write atomic; the mutex documents intent
+     * and removes any dependency on filesystem behaviour. */
     pthread_mutex_lock(log_mutex);
-    write_all(log_fd, line, (size_t)n);
+    ssize_t w = write_all(log_fd, line, (size_t)n);
+    int e = errno;                       /* capture before unlock can clobber it */
     pthread_mutex_unlock(log_mutex);
+    if (w < 0)                           /* spec 2.2.9: log writes must be checked */
+        fprintf(stderr, "[WAREHOUSE] write to %s failed: %s\n", LOG_FILE, strerror(e));
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -852,7 +854,10 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
     pthread_mutex_t log_mutex;
-    pthread_mutex_init(&log_mutex, NULL);
+    if (pthread_mutex_init(&log_mutex, NULL) != 0) {
+        fprintf(stderr, "[WAREHOUSE] log mutex init failed.\n");
+        return EXIT_FAILURE;
+    }
 
     /* ---- code bounded (Lab04) ---- */
     BoundedQueue pending, packaging;
@@ -873,12 +878,18 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
     pthread_mutex_t orders_read_mutex;
-    pthread_mutex_init(&orders_read_mutex, NULL);
+    if (pthread_mutex_init(&orders_read_mutex, NULL) != 0) {
+        fprintf(stderr, "[WAREHOUSE] orders_read mutex init failed.\n");
+        return EXIT_FAILURE;
+    }
 
     /* ---- contatore order_id condiviso ---- */
     int next_order_id = 1;
     pthread_mutex_t order_id_mutex;
-    pthread_mutex_init(&order_id_mutex, NULL);
+    if (pthread_mutex_init(&order_id_mutex, NULL) != 0) {
+        fprintf(stderr, "[WAREHOUSE] order_id mutex init failed.\n");
+        return EXIT_FAILURE;
+    }
 
     /* ---- segnali (Lab03/09) ----
      * Blocchiamo i segnali ORA, mentre il processo e' ancora a thread singolo:
@@ -917,10 +928,25 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    for (int i = 0; i < num_receivers; i++) pthread_create(&recv_th[i], NULL, receiver_thread, &receiver_args);
-    for (int i = 0; i < num_pickers;   i++) pthread_create(&pick_th[i], NULL, picker_thread,   &picker_args);
-    for (int i = 0; i < num_packers;   i++) pthread_create(&pack_th[i], NULL, packer_thread,   &packer_args);
-    pthread_create(&restock_th, NULL, restock_thread, &restock_args);
+    for (int i = 0; i < num_receivers; i++)
+        if (pthread_create(&recv_th[i], NULL, receiver_thread, &receiver_args) != 0) {
+            fprintf(stderr, "[WAREHOUSE] pthread_create (receiver) failed.\n");
+            return EXIT_FAILURE;
+        }
+    for (int i = 0; i < num_pickers;   i++)
+        if (pthread_create(&pick_th[i], NULL, picker_thread, &picker_args) != 0) {
+            fprintf(stderr, "[WAREHOUSE] pthread_create (picker) failed.\n");
+            return EXIT_FAILURE;
+        }
+    for (int i = 0; i < num_packers;   i++)
+        if (pthread_create(&pack_th[i], NULL, packer_thread, &packer_args) != 0) {
+            fprintf(stderr, "[WAREHOUSE] pthread_create (packer) failed.\n");
+            return EXIT_FAILURE;
+        }
+    if (pthread_create(&restock_th, NULL, restock_thread, &restock_args) != 0) {
+        fprintf(stderr, "[WAREHOUSE] pthread_create (restock) failed.\n");
+        return EXIT_FAILURE;
+    }
 
     /* ---- loop principale: aspetta i segnali (Lab09 sigsuspend, race-free) ----
      * sigsuspend sblocca atomicamente i segnali e dorme finche' ne arriva uno;
@@ -960,14 +986,21 @@ int main(int argc, char *argv[])
     close(orders_dummy_fd);
     close(restock_dummy_fd);
 
-    for (int i = 0; i < num_receivers; i++) pthread_join(recv_th[i], NULL);
-    pthread_join(restock_th, NULL);
+    for (int i = 0; i < num_receivers; i++)
+        if (pthread_join(recv_th[i], NULL) != 0)
+            fprintf(stderr, "[WAREHOUSE] pthread_join (receiver) failed.\n");
+    if (pthread_join(restock_th, NULL) != 0)
+        fprintf(stderr, "[WAREHOUSE] pthread_join (restock) failed.\n");
 
     bq_shutdown(&pending);
-    for (int i = 0; i < num_pickers;   i++) pthread_join(pick_th[i], NULL);
+    for (int i = 0; i < num_pickers;   i++)
+        if (pthread_join(pick_th[i], NULL) != 0)
+            fprintf(stderr, "[WAREHOUSE] pthread_join (picker) failed.\n");
 
     bq_shutdown(&packaging);
-    for (int i = 0; i < num_packers;   i++) pthread_join(pack_th[i], NULL);
+    for (int i = 0; i < num_packers;   i++)
+        if (pthread_join(pack_th[i], NULL) != 0)
+            fprintf(stderr, "[WAREHOUSE] pthread_join (packer) failed.\n");
 
     /* ---- cleanup risorse + IPC (spec 2.2.8: clean up FIFO/IPC) ---- */
     close(orders_fd);

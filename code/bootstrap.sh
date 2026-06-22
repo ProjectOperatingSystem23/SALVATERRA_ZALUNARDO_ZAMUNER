@@ -277,6 +277,12 @@ RESTOCK_QTY=5           # unita' per spedizione di restock
 INTERVAL_MIN=5          # intervallo minimo (secondi)
 INTERVAL_MAX=15         # intervallo massimo (secondi)
 INTERVAL_RANGE=$(( INTERVAL_MAX - INTERVAL_MIN + 1 ))
+# I supplier ridondanti (quando NUM_SUPPLIERS > NUM_ITEMS) consegnano piu' di
+# rado: intervallo piu' lungo per non congestionare la RESTOCK_FIFO.
+EXTRA_INTERVAL_MIN=$(( INTERVAL_MAX + 1 ))       # 16: appena oltre i normali (5..15)
+EXTRA_INTERVAL_MAX=$(( INTERVAL_MAX * 2 ))       # 30
+EXTRA_INTERVAL_RANGE=$(( EXTRA_INTERVAL_MAX - EXTRA_INTERVAL_MIN + 1 ))
+
 
 NUM_ITEMS=$(( NUM_LINES - 1 ))   # righe dati = righe totali - header
 
@@ -315,7 +321,7 @@ if [ "$NUM_SUPPLIERS" -gt "$NUM_ITEMS" ]; then
         RANDOM_ITEM=$(tail -n +2 "$CSV_FILE" | sed -n "${RANDOM_LINE}p"  | tr -d '\r' | cut -d',' -f1)
         [ -z "$RANDOM_ITEM" ] && die "Error: selection of a random item failed for supplier $idx"
 
-        INTERVAL=$(( (RANDOM % INTERVAL_RANGE) + INTERVAL_MIN ))
+        INTERVAL=$(( (RANDOM % EXTRA_INTERVAL_RANGE) + EXTRA_INTERVAL_MIN ))   # 16..30
 
         printf '%s,%s,%s\n' "$RANDOM_ITEM" "$RESTOCK_QTY" "$INTERVAL"  >> "$CONF_DIR/supplier_${idx}.conf" || die "Error: failed to update supplier_${idx}.conf"
     done
