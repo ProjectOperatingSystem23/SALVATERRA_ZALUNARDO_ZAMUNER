@@ -45,8 +45,8 @@ QUANTITY=$3
 case "$CLIENT_ID" in
     "")
         die "$ERR_USAGE" "Error: empty client_id." ;;
-    *[!A-Za-z0-9]*)
-        die "$ERR_USAGE" "Error: client_id contains invalid characters (use A-Z, a-z, 0-9)." ;;
+    *[!A-Za-z0-9_]*)
+        die "$ERR_USAGE" "Error: client_id contains invalid characters (use A-Z, a-z, 0-9, _)." ;;
 esac
 if [ "${#CLIENT_ID}" -ge 64 ]; then
     die "$ERR_USAGE" "Error: client_id is too long (max 63 characters)."
