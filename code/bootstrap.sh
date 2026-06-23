@@ -1,16 +1,15 @@
 #!/bin/bash
-# =============================================================================
-# bootstrap.sh -- Launch the Fulfillment Center.
+# ===========================================================================
+# bootstrap.sh: Launch the Fulfillment Center.
 #
 # Usage:
-#   ./bootstrap.sh <num_receivers> <num_pickers> <num_packers>
-#                  <queue_capacity> <num_suppliers> <inventory.csv>
+#   ./bootstrap.sh <num_receivers> <num_pickers> <num_packers> <queue_capacity> <num_suppliers> <inventory.csv>
 #
 # Prepares the environment and starts the C processes in background, then exits
 # leaving them running: validate args + CSV, check executables, clean any
 # previous run, create the FIFOs, generate supplier_N.conf (round-robin), launch
 # ./warehouse and the ./supplier processes (saving PIDs), print a recap.
-# =============================================================================
+# ===========================================================================
 
 # ===========================================================================
 # ERROR / CLEANUP UTILITIES
@@ -31,18 +30,18 @@ die() {
 ORDERS_FIFO="/tmp/orders_fifo"          # order.sh -> warehouse
 RESTOCK_FIFO="/tmp/restock_fifo"        # supplier/manage.sh -> warehouse
 STATUS_FILE="/tmp/wh_status.tmp"        # SIGUSR1 dump: warehouse -> manage.sh
-WAREHOUSE_PID_FILE="/tmp/warehouse.pid" # warehouse PID
-SUPPLIERS_PID_FILE="/tmp/suppliers.pid" # supplier PIDs (one per line)
+WAREHOUSE_PID_FILE="/tmp/warehouse.pid"
+SUPPLIERS_PID_FILE="/tmp/suppliers.pid"
 LOG_FILE="orders.log"
 CONF_DIR="./supplier_configs"           # holds the supplier_N.conf files
 
 # ---- Bootstrap state: decides WHETHER to clean up on error ----
-STARTED_PIDS=""        # PIDs already launched (to kill on failure)
-RUNTIME_CREATED=0      # 1 = started creating FIFOs/state files
-BOOTSTRAP_SUCCESS=0    # 1 = launch completed: do NOT clean up on exit
+STARTED_PIDS=""       # PIDs already launched (to kill on failure)
+RUNTIME_CREATED=0     # 1 = started creating FIFOs/state files
+BOOTSTRAP_SUCCESS=0   # 1 = launch completed: do NOT clean up on exit
 
-# cleanup_runtime: Kills launched processes and removes created
-# resources. Used only if startup fails halfway.
+# cleanup_runtime: kills launched processes and removes created resources.
+# Used only if startup fails halfway.
 cleanup_runtime() {
     err "Cleanup after failed launch..."
 
@@ -51,14 +50,13 @@ cleanup_runtime() {
     done
 
     rm -f "$ORDERS_FIFO" "$RESTOCK_FIFO" "$STATUS_FILE" "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE"
-
     rm -rf "$CONF_DIR"
 }
 
 # on_exit: EXIT trap handler. Runs on every exit; cleans up only if startup did
 # not complete but runtime resources were already created.
 on_exit() {
-    rc=$?
+    ret_code=$?
 
     trap - EXIT INT TERM   # disarm to avoid re-entering on the final exit
 
@@ -66,7 +64,7 @@ on_exit() {
         cleanup_runtime
     fi
 
-    exit "$rc"
+    exit "$ret_code"
 }
 
 # ---- Traps  ----
@@ -91,9 +89,9 @@ CSV_FILE=$6
 # The 5 numeric parameters must be strictly positive integers (>= 1).
 for arg in "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAPACITY" "$NUM_SUPPLIERS"; do
     case "$arg" in
-        ''|*[!0-9]*) die "Error: '$arg' is not a positive integer" ;;  # empty/non-digit
-        *[1-9]*)     : ;;                                                # has a 1-9 digit -> OK
-        *)           die "Error: '$arg' must be >= 1" ;;            # all digits are 0
+        ''|*[!0-9]*) die "Error: '$arg' is not a positive integer" ;;     # empty/non-digit
+        *[1-9]*) : ;;                                                     # has a 1-9 digit -> OK
+        *) die "Error: '$arg' must be >= 1" ;;                            # all digits are 0
     esac
 done
 
@@ -122,7 +120,7 @@ if [ "$NUM_LINES" -lt 2 ]; then
 fi
 
 # No duplicate ItemID.
-DUPLICATES=$(tail -n +2 "$CSV_FILE" | cut -d',' -f1 | tr -d '\r' | sort | uniq -d)
+DUPLICATES=$(tail -n +2 "$CSV_FILE" | cut -d',' -f1 | sort | uniq -d)
 if [ -n "$DUPLICATES" ]; then
     err "Error: duplicate ItemID found:"
     printf '%s\n' "$DUPLICATES" >&2
@@ -132,7 +130,6 @@ fi
 # Per-line checks.
 LINE_NUM=0
 while IFS= read -r line || [ -n "$line" ]; do
-    line=${line%$'\r'}
     LINE_NUM=$(( LINE_NUM + 1 ))
 
     # Line 1 = header: must match exactly.
@@ -148,7 +145,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     fi
 
     # Exactly 4 comma-separated fields.
-    NUM_FIELDS=$(awk -F',' '{print NF}' <<< "$line")
+    NUM_FIELDS=$(($(tr -cd ',' <<< "$line" | wc -c) + 1))
     if [ "$NUM_FIELDS" -ne 4 ]; then
         die "Error: line $LINE_NUM has $NUM_FIELDS fields (expected 4)."
     fi
@@ -166,7 +163,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     CATEGORY=$(printf '%s\n' "$line" | cut -d',' -f3)
     STOCK=$(printf '%s\n' "$line" | cut -d',' -f4)
 
-    # ItemID and Stock must be non-negative integers.
+    # ItemID and Stock must be non-negative.
     case "$ITEM_ID" in
         ''|*[!0-9]*) die "Error: line $LINE_NUM, ItemID is not a number." ;;
     esac
@@ -248,7 +245,6 @@ done
 SUPPLIER_IDX=1
 LINE_NUM=0
 while IFS= read -r line || [ -n "$line" ]; do
-    line=${line%$'\r'}
     LINE_NUM=$(( LINE_NUM + 1 ))
     [ "$LINE_NUM" -eq 1 ] && continue  # skip header
 
@@ -263,15 +259,15 @@ done < "$CSV_FILE"
 
 # More suppliers than items: assign a random item to each spare supplier with a longer restock interval(16-30s).
 if [ "$NUM_SUPPLIERS" -gt "$NUM_ITEMS" ]; then
-    for ((idx = NUM_ITEMS + 1; idx <= NUM_SUPPLIERS; idx++)); do
+    for ((SUPPLIER_IDX = NUM_ITEMS + 1; SUPPLIER_IDX <= NUM_SUPPLIERS; SUPPLIER_IDX++)); do
         RANDOM_LINE=$(( (RANDOM % NUM_ITEMS) + 1 ))
 
-        RANDOM_ITEM=$(tail -n +2 "$CSV_FILE" | sed -n "${RANDOM_LINE}p"  | tr -d '\r' | cut -d',' -f1)
-        [ -z "$RANDOM_ITEM" ] && die "Error: selection of a random item failed for supplier $idx"
+        RANDOM_ITEM=$(tail -n +2 "$CSV_FILE" | head -n "$RANDOM_LINE" | tail -n 1 | cut -d',' -f1)
+        [ -z "$RANDOM_ITEM" ] && die "Error: selection of a random item failed for supplier $SUPPLIER_IDX"
 
         INTERVAL=$(( (RANDOM % EXTRA_INTERVAL_RANGE) + EXTRA_INTERVAL_MIN ))
 
-        printf '%s,%s,%s\n' "$RANDOM_ITEM" "$RESTOCK_QTY" "$INTERVAL"  >> "$CONF_DIR/supplier_${idx}.conf" || die "Error: failed to update supplier_${idx}.conf"
+        printf '%s,%s,%s\n' "$RANDOM_ITEM" "$RESTOCK_QTY" "$INTERVAL"  >> "$CONF_DIR/supplier_${SUPPLIER_IDX}.conf" || die "Error: failed to update supplier_${SUPPLIER_IDX}.conf"
     done
 fi
 
@@ -281,7 +277,7 @@ fi
 
 ./warehouse "$NUM_RECEIVERS" "$NUM_PICKERS" "$NUM_PACKERS" "$QUEUE_CAPACITY" "$CSV_FILE" &
 WAREHOUSE_PID=$!
-STARTED_PIDS="$STARTED_PIDS $WAREHOUSE_PID"
+STARTED_PIDS="$WAREHOUSE_PID"
 
 printf '%s\n' "$WAREHOUSE_PID" > "$WAREHOUSE_PID_FILE" || die "Error: failed to write on $WAREHOUSE_PID_FILE"
 
@@ -303,7 +299,7 @@ for ((i = 1; i <= NUM_SUPPLIERS; i++)); do
 done
 
 # Short wait and final check: all processes must be alive.
-sleep 0.2
+sleep 1
 for pid in $STARTED_PIDS; do
     if ! kill -0 "$pid" 2>/dev/null; then
         die "Error: the process $pid was terminated during startup"

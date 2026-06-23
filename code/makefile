@@ -1,5 +1,5 @@
 # =============================================================================
-# Makefile -- Fulfillment Center
+# Makefile: Fulfillment Center
 # =============================================================================
 
 CC = gcc
@@ -32,7 +32,7 @@ manage_restock_helper: manage_restock_helper.o common.o
 	$(CC) $(CFLAGS) -c $< -o $@
 
 usage help:
-	@echo "Fulfillment Center (Project 2026-3) - make rules"
+	@echo "Fulfillment Center: make rules"
 	@echo ""
 	@echo "  make build                compiles executables"
 	@echo "  make run [ARGS=\"...\"]   launches the system through bootstrap.sh"

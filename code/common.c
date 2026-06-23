@@ -1,5 +1,5 @@
 /* ============================================================================
- * common.c -- Implementation of the shared helpers declared in common.h.
+ * common.c: Implementation of the shared helpers declared in common.h.
  * ============================================================================ */
 
 #include <string.h>
@@ -36,11 +36,11 @@ ssize_t write_all(int fd, const void *buf, size_t len)
     return (ssize_t)done;
 }
 
-/* FIFO read-end + dummy write-end, read-end made blocking. Prints nothing; on
- * error returns -1 with errno preserved across the cleanup close()s. */
+/* FIFO read-end + dummy write-end, read-end made blocking.
+ * On error returns -1 with errno preserved across the cleanup close()s. */
 int open_fifo_r_dw(const char *path, mode_t mode, int *read_fd, int *dummy_write_fd)
 {
-    if (mkfifo(path, mode) != 0 && errno != EEXIST)    /* idempotent */
+    if (mkfifo(path, mode) != 0 && errno != EEXIST)
         return -1;
 
     int rfd = open(path, O_RDONLY | O_NONBLOCK);       /* does not block without a writer */
@@ -53,8 +53,8 @@ int open_fifo_r_dw(const char *path, mode_t mode, int *read_fd, int *dummy_write
         return -1;
     }
 
-    int fl = fcntl(rfd, F_GETFL, 0);                   /* clear O_NONBLOCK on the read-end */
-    if (fl < 0 || fcntl(rfd, F_SETFL, fl & ~O_NONBLOCK) < 0) {
+    int flags = fcntl(rfd, F_GETFL, 0);                   /* clear O_NONBLOCK on the read-end */
+    if (flags < 0 || fcntl(rfd, F_SETFL, flags & ~O_NONBLOCK) < 0) {
         int e = errno; close(rfd); close(wfd); errno = e;
         return -1;
     }

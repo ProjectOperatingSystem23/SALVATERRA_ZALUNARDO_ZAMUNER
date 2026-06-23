@@ -1,5 +1,5 @@
 /* ============================================================================
- * order_helper.c -- C helper of order.sh.
+ * order_helper.c: C helper of order.sh.
  *
  * Usage (invoked by order.sh):
  *   ./order_helper <client_id> <item_id> <quantity>
@@ -26,8 +26,8 @@ static volatile sig_atomic_t timed_out_flag = 0;   /* set by SIGALRM */
 
 static void on_alarm(int sig) { (void)sig; timed_out_flag = 1; }
 
-/* Timeout-aware full read of the response: on EINTR, give up if the alarm fired,
- * otherwise retry. Returns bytes read, 0 = EOF, -1 = error. */
+/* Timeout-aware full read of the response: on EINTR, give up if the alarm fired, otherwise retry.
+ * Returns bytes read, 0 = EOF, -1 = error. */
 static ssize_t read_response(int fd, void *buf, size_t len)
 {
     size_t done = 0;
@@ -51,33 +51,27 @@ static void print_outcome(const char *client_id, const OrderResponse *r)
 {
     switch (r->status) {
     case ERR_OK:
-        printf("[OK] %s: orders complete item=%d  shipped=%d/%d\n",
-               client_id, r->item_id, r->qty_shipped, r->qty_requested);
+        printf("[OK] %s: orders complete item=%d  shipped=%d/%d\n", client_id, r->item_id, r->qty_shipped, r->qty_requested);
         break;
     case ERR_PARTIAL_FILL:
-        printf("[PARTIAL] %s: item=%d  shipped=%d/%d  (rejected=%d, insufficient stock)\n",
-               client_id, r->item_id, r->qty_shipped, r->qty_requested, r->qty_rejected);
+        printf("[PARTIAL] %s: item=%d  shipped=%d/%d  (rejected=%d, insufficient stock)\n", client_id, r->item_id, r->qty_shipped, r->qty_requested, r->qty_rejected);
         break;
     case ERR_ITEM_NOT_FOUND:
-        printf("[REJECTED] %s: item=%d does not exist in the inventory\n",
-               client_id, r->item_id);
+        printf("[REJECTED] %s: item=%d does not exist in the inventory\n", client_id, r->item_id);
         break;
     case ERR_OUT_OF_STOCK:
-        printf("[REJECTED] %s: item=%d is out of stock\n",
-               client_id, r->item_id);
+        printf("[REJECTED] %s: item=%d is out of stock\n", client_id, r->item_id);
         break;
     case ERR_INVALID_QTY:
-        printf("[REJECTED] %s: invalid quantity (%d)\n",
-               client_id, r->qty_requested);
+        printf("[REJECTED] %s: invalid quantity (%d)\n", client_id, r->qty_requested);
         break;
     default:
-        printf("[REJECTED] %s: item=%d  status=%d\n",
-               client_id, r->item_id, r->status);
+        printf("[REJECTED] %s: item=%d  status=%d\n", client_id, r->item_id, r->status);
         break;
     }
 }
 
-/* ====== MAIN ============================================================== */
+/* ====== MAIN ====== */
 int main(int argc, char *argv[])
 {
     if (argc != 4) {
@@ -90,8 +84,7 @@ int main(int argc, char *argv[])
 
     /* client_id must be non-empty and fit the struct field. */
     if (client_id[0] == '\0' || strlen(client_id) >= MAX_CLIENT_ID) {
-        fprintf(stderr, "[ORDER] client_id missing or too long (max %d)\n",
-                MAX_CLIENT_ID - 1);
+        fprintf(stderr, "[ORDER] client_id missing or too long (max %d)\n",                MAX_CLIENT_ID - 1);
         return ERR_USAGE;
     }
 
@@ -103,8 +96,8 @@ int main(int argc, char *argv[])
     char resp_path[MAX_RESP_FIFO];
     snprintf(resp_path, sizeof(resp_path), RESP_FIFO_TEMPLATE, (int)getpid());
 
-    int resp_fd, resp_dummy_w_fd;
-    if (open_fifo_r_dw(resp_path, 0600, &resp_fd, &resp_dummy_w_fd) != 0) {
+    int resp_r_fd, resp_dummy_w_fd;
+    if (open_fifo_r_dw(resp_path, 0600, &resp_r_fd, &resp_dummy_w_fd) != 0) {
         fprintf(stderr, "[ORDER] init resp_fifo '%s': %s\n", resp_path, strerror(errno));
         unlink(resp_path);
         return ERR_IO;
@@ -120,16 +113,18 @@ int main(int argc, char *argv[])
         if (ofd < 0) {
             if (errno == EINTR) { /* EINTR: exit on timeout, otherwise retry. */
                 if (timed_out_flag) {
-                    fprintf(stderr, "[ORDER] timeout while opening ORDERS_FIFO "
-                                    "(warehouse is not responding)\n");
-                    close(resp_fd); close(resp_dummy_w_fd); unlink(resp_path);
+                    fprintf(stderr, "[ORDER] timeout while opening ORDERS_FIFO (warehouse is not responding)\n");
+                    close(resp_r_fd);
+                    close(resp_dummy_w_fd);
+                    unlink(resp_path);
                     return ERR_TIMEOUT;
                 }
                 continue;
             }
-            fprintf(stderr, "[ORDER] open '%s': %s (is the warehouse active?)\n",
-                    ORDERS_FIFO, strerror(errno));
-            close(resp_fd); close(resp_dummy_w_fd); unlink(resp_path);
+            fprintf(stderr, "[ORDER] open '%s': %s (is the warehouse active?)\n", ORDERS_FIFO, strerror(errno));
+            close(resp_r_fd);
+            close(resp_dummy_w_fd);
+            unlink(resp_path);
             return ERR_WAREHOUSE_DOWN;
         }
     }
@@ -143,7 +138,10 @@ int main(int argc, char *argv[])
     req.quantity = quantity;
     if (write_all(ofd, &req, sizeof(req)) < 0) {
         fprintf(stderr, "[ORDER] write to ORDERS_FIFO: %s\n", strerror(errno));
-        close(ofd); close(resp_fd); close(resp_dummy_w_fd); unlink(resp_path);
+        close(ofd);
+        close(resp_r_fd);
+        close(resp_dummy_w_fd);
+        unlink(resp_path);
         return ERR_IO;
     }
     close(ofd);
@@ -151,17 +149,16 @@ int main(int argc, char *argv[])
     /* ----  reads the response on the private FIFO ---- */
     OrderResponse resp;
     memset(&resp, 0, sizeof(resp));
-    ssize_t n = read_response(resp_fd, &resp, sizeof(resp));
+    ssize_t n = read_response(resp_r_fd, &resp, sizeof(resp));
     alarm(0); /*disarm the timeout*/
 
-    close(resp_fd);
+    close(resp_r_fd);
     close(resp_dummy_w_fd);
     unlink(resp_path);
 
     if (n != (ssize_t)sizeof(resp)) {
         if (timed_out_flag) {
-            fprintf(stderr, "[ORDER] timeout: no response from the warehouse "
-                            "within %d s\n", RESP_TIMEOUT_SECONDS);
+            fprintf(stderr, "[ORDER] timeout: no response from the warehouse within %d s\n", RESP_TIMEOUT_SECONDS);
             return ERR_TIMEOUT;
         }
         fprintf(stderr, "[ORDER] missing or truncated response (%zd byte)\n", n);

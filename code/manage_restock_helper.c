@@ -1,5 +1,5 @@
 /* ============================================================================
- * manage_restock_helper.c -- C helper of manage.sh.
+ * manage_restock_helper.c: C helper of manage.sh.
  *
  * Usage (invoked by manage.sh restock):
  *   ./manage_restock_helper <item_id> <quantity>
@@ -40,7 +40,7 @@ int main(int argc, char *argv[])
     /* SIGPIPE ignored */
     setup_handler(SIGPIPE, SIG_IGN);
 
-    /* Non-blocking open: fail fast if the warehouse (the reader) is absent. */
+    /* Non-blocking open: fails if the warehouse (the reader) is absent. */
     int fd = open(RESTOCK_FIFO, O_WRONLY | O_NONBLOCK);
     if (fd < 0) {
         if (errno == ENXIO || errno == ENOENT) {

@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# manage.sh -- Control panel of the Fulfillment Center.
+# manage.sh: Control panel of the Fulfillment Center.
 #
 # Usage:
 #   ./manage.sh status                  # SIGUSR1 -> warehouse dumps status; print it
@@ -8,7 +8,7 @@
 #   ./manage.sh report                  # statistics from orders.log
 #   ./manage.sh shutdown                # clean stop + IPC cleanup
 #
-# Talks to the warehouse via signals and IPC.
+# Interacts with the warehouse via signals and IPC.
 # =============================================================================
 
 # ---- error codes  ----
@@ -65,12 +65,14 @@ warehouse_pid_if_alive() {
 request_status_dump() {
     local wpid=$1 i
     rm -f "$STATUS_FILE"
-    kill -USR1 "$wpid" 2>/dev/null || return "$ERR_WAREHOUSE_DOWN"
+    kill -USR1 "$wpid" 2>/dev/null || { err "Failed to send SIGUSR1."; return "$ERR_WAREHOUSE_DOWN"; }
+
     for i in $(seq 1 30); do          # ~3 s max
         [ -s "$STATUS_FILE" ] && return "$ERR_OK"
         sleep 0.1
     done
-    return "$ERR_TIMEOUT"
+    [ -s "$STATUS_FILE" ] || { err "Warehouse didn't produce the status dump in time."; return "$ERR_TIMEOUT"; }
+    return "$ERR_OK"
 }
 # ===========================================================================
 # status
@@ -103,16 +105,9 @@ cmd_status() {
         return "$ERR_WAREHOUSE_DOWN"
     fi
 
-    # Ask for the dump: remove the old file, send SIGUSR1.
-    rm -f "$STATUS_FILE"
-    kill -USR1 "$wpid" 2>/dev/null || die "$ERR_WAREHOUSE_DOWN" "Failed to send SIGUSR1."
+    # Ask for the dump
+    request_status_dump "$wpid" || die "$?" "Warehouse didn't produce the status dump in time."
 
-    local i
-    for i in $(seq 1 30); do          # ~3 s max
-        [ -s "$STATUS_FILE" ] && break
-        sleep 0.1
-    done
-    [ -s "$STATUS_FILE" ] || die "$ERR_TIMEOUT" "Warehouse didn't produce the status dump in time."
     echo
     echo "=== Queues (items / capacity) ==="
     echo "  Pending   : $(grep '^PENDING_QUEUE='   "$STATUS_FILE" | cut -d= -f2)"
@@ -167,7 +162,7 @@ cmd_restock() {
     local restock_ec=$?
     if [ "$restock_ec" -eq "$ERR_OK" ]; then
         echo "Restock accepted by the system (item $item_id, +$qty units)."
-        echo "Tip: './manage.sh status' to view the update inventory."
+        echo "Tip: './manage.sh status' to view the updated inventory."
     else
         err "Restock failed (code $restock_ec)."
     fi
@@ -183,23 +178,27 @@ cmd_report() {
     { [ -f "$LOG_FILE" ] && [ -r "$LOG_FILE" ] ;} || die "$ERR_IO" "Log '$LOG_FILE' not found."
 
     local total shipped partial rejected units
-    total=$(wc -l < "$LOG_FILE")                    # total lines = orders processed
+    total=$(wc -l < "$LOG_FILE")                      # total lines = orders processed
     shipped=$(grep -c '|SHIPPED$'  "$LOG_FILE")
     partial=$(grep -c '|PARTIAL$'  "$LOG_FILE")
     rejected=$(grep -c '|REJECTED$' "$LOG_FILE")
-    units=$(awk -F'|' '{ s += $6 } END { print s + 0 }' "$LOG_FILE")   # sum qty_shipped (field 6)
+    units=0
+    while IFS='|' read -r _ _ _ _ _ qty _; do # search qty_shipped (field 6)
+        units=$(( units + qty ))
+    done < "$LOG_FILE"
     echo "=== Order REPORT ($LOG_FILE) ==="
-    echo "  Total orders processed : $total"
-    echo "  Orders fulfilled: $shipped"
-    echo "  Orders partially fulfilled (PARTIAL): $partial"
-    echo "  Orders rejected       (REJECTED): $rejected"
-    echo "  Total Units Shipped     : $units"
-
+    echo "  Total orders processed:                $total"
+    echo "  Number of orders fulfilled:            $shipped"
+    echo "  Number of orders partially fulfilled:  $partial"
+    echo "  NUmber of orders rejected:             $rejected"
+    echo "  Total Units Shipped:                   $units"
     echo
     echo "  Top 5 Most Ordered Items (by number of orders):"
     # exclude rejected, take item_id (field 4), count, sort decreasing, top 5.
-    grep -vE '\|REJECTED$' "$LOG_FILE" | cut -d'|' -f4 | sort | uniq -c | sort -rn | head -5 | awk '{ printf "    item %-8s -> %s orders\n", $2, $1 }'
-
+    grep -vE '\|REJECTED$' "$LOG_FILE" | cut -d'|' -f4 | sort | uniq -c | sort -rn | head -5 |
+    while read -r count item; do
+        printf "  item %-8s -> %s orders\n" "$item" "$count"
+    done
     return "$ERR_OK"
 }
 
@@ -232,7 +231,7 @@ cmd_shutdown() {
     fi
 
     # Clean up IPC and state files (also covers orphan files left by a crash).
-    rm -f "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE" "$STATUS_FILE"   "$ORDERS_FIFO" "$RESTOCK_FIFO"
+    rm -f "$WAREHOUSE_PID_FILE" "$SUPPLIERS_PID_FILE" "$STATUS_FILE" "$ORDERS_FIFO" "$RESTOCK_FIFO"
     rm -f /tmp/order_resp_*
     rm -rf "$CONF_DIR"
 
