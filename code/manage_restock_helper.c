@@ -44,8 +44,7 @@ int main(int argc, char *argv[])
     int fd = open(RESTOCK_FIFO, O_WRONLY | O_NONBLOCK);
     if (fd < 0) {
         if (errno == ENXIO || errno == ENOENT) {
-            fprintf(stderr, "[RESTOCK] warehouse down"
-                            "(FIFO '%s': %s)\n", RESTOCK_FIFO, strerror(errno));
+            fprintf(stderr, "[RESTOCK] warehouse down (FIFO '%s': %s)\n", RESTOCK_FIFO, strerror(errno));
             return ERR_WAREHOUSE_DOWN;
         }
         fprintf(stderr, "[RESTOCK] failed to open '%s': %s\n", RESTOCK_FIFO, strerror(errno));

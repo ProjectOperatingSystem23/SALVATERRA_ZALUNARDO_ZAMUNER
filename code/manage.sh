@@ -13,6 +13,7 @@
 
 # ---- error codes  ----
 ERR_OK=0
+ERR_ITEM_NOT_FOUND=1
 ERR_IO=4
 ERR_WAREHOUSE_DOWN=6
 ERR_TIMEOUT=7
@@ -59,6 +60,18 @@ warehouse_pid_if_alive() {
     return 0
 }
 
+# Requests a fresh status dump, takes as argument the warehouse PID
+# Returns ERR_OK if the dump is found, otherwise ERR_* non-zero
+request_status_dump() {
+    local wpid=$1 i
+    rm -f "$STATUS_FILE"
+    kill -USR1 "$wpid" 2>/dev/null || return "$ERR_WAREHOUSE_DOWN"
+    for i in $(seq 1 30); do          # ~3 s max
+        [ -s "$STATUS_FILE" ] && return "$ERR_OK"
+        sleep 0.1
+    done
+    return "$ERR_TIMEOUT"
+}
 # ===========================================================================
 # status
 # ===========================================================================
@@ -101,7 +114,7 @@ cmd_status() {
     done
     [ -s "$STATUS_FILE" ] || die "$ERR_TIMEOUT" "Warehouse didn't produce the status dump in time."
     echo
-    echo "=== Queues (items / capacity') ==="
+    echo "=== Queues (items / capacity) ==="
     echo "  Pending   : $(grep '^PENDING_QUEUE='   "$STATUS_FILE" | cut -d= -f2)"
     echo "  Packaging : $(grep '^PACKAGING_QUEUE=' "$STATUS_FILE" | cut -d= -f2)"
     echo
@@ -143,7 +156,7 @@ cmd_restock() {
     "$RESTOCK_HELPER" "$item_id" "$qty"
     local restock_ec=$?
     if [ "$restock_ec" -eq "$ERR_OK" ]; then
-        echo "Restock accepted by the system (item $item_id, +$qty units')."
+        echo "Restock accepted by the system (item $item_id, +$qty units)."
         echo "Tip: './manage.sh status' to view the update inventory."
     else
         err "Restock failed (code $restock_ec)."
@@ -175,7 +188,7 @@ cmd_report() {
     echo
     echo "  Top 5 Most Ordered Items (by number of orders):"
     # exclude rejected, take item_id (field 4), count, sort decreasing, top 5.
-    grep -vE '\|REJECTED$' "$LOG_FILE" | cut -d'|' -f4 | sort | uniq -c | sort -rn | head -5 | awk '{ printf "    item %-8s -> %s ordini\n", $2, $1 }'
+    grep -vE '\|REJECTED$' "$LOG_FILE" | cut -d'|' -f4 | sort | uniq -c | sort -rn | head -5 | awk '{ printf "    item %-8s -> %s orders\n", $2, $1 }'
 
     return "$ERR_OK"
 }

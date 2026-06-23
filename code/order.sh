@@ -27,7 +27,7 @@ err() { printf '%s\n' "$*" >&2; }
 
 # die <exit_code> <message...>: print the error and exit with the ERR_* code.
 die() {
-    code=$1
+    local code=$1
     shift
     err "$*"
     exit "$code"

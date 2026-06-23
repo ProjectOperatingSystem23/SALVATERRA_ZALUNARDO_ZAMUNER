@@ -775,7 +775,7 @@ int main(int argc, char *argv[])
 
     RestockMsg stop_msg = { RESTOCK_STOP_ID, 0, 0 };
     if (write_all(restock_dummy_fd, &stop_msg, sizeof(stop_msg)) < 0)
-        perror("[WAREHOUSE] write sentinella restock");
+        perror("[WAREHOUSE] failed to write sentinel on restock FIFO");
 
     close(orders_dummy_fd);
     close(restock_dummy_fd);

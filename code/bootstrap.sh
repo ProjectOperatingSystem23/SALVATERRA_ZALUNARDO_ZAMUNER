@@ -176,10 +176,10 @@ while IFS= read -r line || [ -n "$line" ]; do
 
     # Lengths consistent with the structs (common.h).
     if [ "${#DESCRIPTION}" -ge 128 ]; then
-        die "Error: line $LINE_NUM, Description is too long (max 127 charachters)."
+        die "Error: line $LINE_NUM, Description is too long (max 127 characters)."
     fi
     if [ "${#CATEGORY}" -ge 64 ]; then
-        die "Error: line $LINE_NUM, Category is too long (max 63 charachters)."
+        die "Error: line $LINE_NUM, Category is too long (max 63 characters)."
     fi
 done < "$CSV_FILE"
 
