@@ -190,7 +190,7 @@ cmd_report() {
     echo "  Total orders processed:                $total"
     echo "  Number of orders fulfilled:            $shipped"
     echo "  Number of orders partially fulfilled:  $partial"
-    echo "  NUmber of orders rejected:             $rejected"
+    echo "  Number of orders rejected:             $rejected"
     echo "  Total Units Shipped:                   $units"
     echo
     echo "  Top 5 Most Ordered Items (by number of orders):"

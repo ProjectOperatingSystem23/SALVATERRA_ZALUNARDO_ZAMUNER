@@ -163,10 +163,14 @@ while IFS= read -r line || [ -n "$line" ]; do
     CATEGORY=$(printf '%s\n' "$line" | cut -d',' -f3)
     STOCK=$(printf '%s\n' "$line" | cut -d',' -f4)
 
-    # ItemID and Stock must be non-negative.
+    # ItemID must be >=1.
     case "$ITEM_ID" in
         ''|*[!0-9]*) die "Error: line $LINE_NUM, ItemID is not a number." ;;
     esac
+    if [ "$ITEM_ID" -lt 1 ]; then
+        die "Error: line $LINE_NUM, ItemID must be >= 1."
+    fi
+    #Stock must be non negative
     case "$STOCK" in
         ''|*[!0-9]*) die "Error: line $LINE_NUM, Stock is not a number." ;;
     esac
