@@ -148,11 +148,21 @@ cmd_restock() {
         *)           die "$ERR_USAGE" "Error: quantity must be >= 1." ;;
     esac
 
-    # Check that the warehouse is alive and its FIFO present
-    warehouse_pid_if_alive >/dev/null || die "$ERR_WAREHOUSE_DOWN" "Error: warehouse not in execution. Launch ./bootstrap.sh"
+    # Checks that the warehouse is alive and its FIFO present
+    local wpid
+    wpid=$(warehouse_pid_if_alive) || die "$ERR_WAREHOUSE_DOWN" "Error: warehouse not in execution. Launch ./bootstrap.sh"
     [ -p "$RESTOCK_FIFO" ] || die "$ERR_WAREHOUSE_DOWN" "Error: FIFO restock '$RESTOCK_FIFO' nonexistent."
-    { [ -f "$RESTOCK_HELPER" ] && [ -x "$RESTOCK_HELPER" ]; } || die "$ERR_IO" "Error: '$RESTOCK_HELPER' not found/executable (compile with: make build)."
-    # Delegate the binary IPC to the C helper; its $? is already an ERR_*.
+    { [ -f "$RESTOCK_HELPER" ] && [ -x "$RESTOCK_HELPER" ]; } || die "$ERR_IO" "Error: '$RESTOCK_HELPER' not found/executable (make build)."
+
+    # --- Check that the ItemID requested for restock is present inside the inventory ---
+    request_status_dump "$wpid"
+    local dump_ec=$?
+    [ "$dump_ec" -eq "$ERR_OK" ] || die "$dump_ec" "Error: could not read warehouse inventory (status dump failed)."
+    if ! grep -q "^ITEM|${item_id}|" "$STATUS_FILE"; then
+      die "$ERR_ITEM_NOT_FOUND" "Error: item $item_id does not exist in the inventory; restock refused."
+    fi
+
+    # Delegates the binary IPC to the C helper.
     "$RESTOCK_HELPER" "$item_id" "$qty"
     local restock_ec=$?
     if [ "$restock_ec" -eq "$ERR_OK" ]; then
