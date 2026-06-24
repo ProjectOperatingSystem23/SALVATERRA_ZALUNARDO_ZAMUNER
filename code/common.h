@@ -11,7 +11,7 @@
  * same header so that sizeof(struct) matches on both ends of a read/write.
  *
  * Holds: IPC paths, shared error codes, string-field limits, the three
- * wire-format structs and the prototypes of the shared helpers (common.c).
+ * binary structs and the prototypes of the shared helpers (common.c).
  * ============================================================================ */
 
 /* ====== IPC PATHS AND SYSTEM FILES ====================================== */
